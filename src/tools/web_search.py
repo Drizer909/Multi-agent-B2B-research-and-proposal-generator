@@ -13,10 +13,7 @@ Uses Tavily's FREE tier (1,000 searches/month).
 from langchain_core.tools import tool
 from tavily import TavilyClient
 
-from src.config import APIKeys, OpenRouterRateLimiter
-
-# Initialize a rate limiter instance if not already provided in config
-rate_limiter = OpenRouterRateLimiter()
+from src.config import APIKeys, rate_limiter
 
 @tool
 def web_search(query: str) -> str:

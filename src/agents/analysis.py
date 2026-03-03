@@ -17,12 +17,9 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.config import ModelConfig, ProposalConfig, OpenRouterRateLimiter
+from src.config import ModelConfig, ProposalConfig, rate_limiter
 from src.state.schema import ProposalState, SolutionMapping
 from src.tools.rag_search import rag_search_case_studies, rag_search_product_docs
-
-# Initialize rate limiter
-rate_limiter = OpenRouterRateLimiter()
 
 # ──────────────────────────────────────────────
 # System Prompt
