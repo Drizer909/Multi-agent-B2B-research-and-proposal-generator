@@ -96,7 +96,6 @@ def scan_data_directories() -> list[dict]:
                 "metadata": metadata,
                 "path": md_file,
             })
-            print(f"  📄 Loaded: {md_file.parent.name}/{md_file.name} ({len(text):,} chars)")
 
     return documents
 
