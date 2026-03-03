@@ -37,9 +37,11 @@ EVALUATION CRITERIA:
 
 4. **Company Name Correct** (true/false): Is the prospect's company name ({prospect_name}) used correctly throughout?
 
-5. **Factual Accuracy** (true/false): Do the claims align with the research data provided?
-
 6. **Section Quality** (0.0-1.0 per section): Rate each section individually.
+
+7. **Contextual Awareness**: 
+   - If the research data provided to you contains NO case studies or ROI metrics, DO NOT penalize the proposal for lacking them. 
+   - Only flag missing items if they were clearly present in the research data but omitted in the draft.
 
 SCORING GUIDE:
 - 0.9-1.0: Excellent — ready to send

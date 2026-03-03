@@ -154,15 +154,37 @@ def writing_agent(state: ProposalState) -> dict:
         
         cleaned_text = cleaned_text.strip()
 
+        # Repair JSON: Escape raw control characters (like newlines) inside strings
+        # This is a common LLM error where it provides literal newlines instead of \n
+        import re
+        def repair_json_strings(text):
+            # Find content between double quotes
+            # This regex is simple and might need refinement for complex quotes
+            def replace_control_chars(match):
+                content = match.group(0)
+                # Replace actual newlines, tabs, etc. inside the quoted string
+                content = content.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                return content
+            return re.sub(r'".*?"', replace_control_chars, text, flags=re.DOTALL)
+
         try:
+            # First attempt: standard parse
             proposal_sections: dict[str, str] = json.loads(cleaned_text)
         except json.JSONDecodeError:
-            import re
-            match = re.search(r"\{.*\}", cleaned_text, re.DOTALL)
-            if match:
-                proposal_sections = json.loads(match.group(0))
-            else:
-                raise
+            # Second attempt: repair and retry
+            print("  ⚠️ Initial JSON parse failed. Attempting repair...")
+            try:
+                repaired_text = repair_json_strings(cleaned_text)
+                proposal_sections = json.loads(repaired_text)
+                print("  ✅ JSON repair successful!")
+            except json.JSONDecodeError:
+                # Third attempt: regex extraction fallback
+                import re
+                match = re.search(r"\{.*\}", cleaned_text, re.DOTALL)
+                if match:
+                    proposal_sections = json.loads(match.group(0))
+                else:
+                    raise
 
         # Assemble full proposal draft
         draft_parts = [

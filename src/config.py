@@ -11,9 +11,18 @@ ChatOpenAI class with base_url="https://openrouter.ai/api/v1"
 """
 
 import os
+import warnings
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+# Suppress urllib3 SSL warnings (specifically LibreSSL on macOS)
+try:
+    import urllib3
+    from urllib3.exceptions import NotOpenSSLWarning
+    warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+except ImportError:
+    pass
 
 # ──────────────────────────────────────────────
 # Load .env file from project root
