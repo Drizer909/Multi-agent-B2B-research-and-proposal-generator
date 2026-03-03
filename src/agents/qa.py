@@ -17,11 +17,8 @@ from datetime import datetime, timezone
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from src.config import ModelConfig, ProposalConfig, OpenRouterRateLimiter
+from src.config import ModelConfig, ProposalConfig, rate_limiter
 from src.state.schema import ProposalState, QAResult
-
-# Initialize rate limiter
-rate_limiter = OpenRouterRateLimiter()
 
 # ──────────────────────────────────────────────
 # System Prompt
