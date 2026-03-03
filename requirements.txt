@@ -1,0 +1,45 @@
+# ================================================
+# B2B Proposal Generator — Dependencies
+# Using: Llama 3.3 70B via Groq (FREE)
+# Using: HuggingFace Embeddings (FREE, local)
+# ================================================
+
+# Core AI Framework
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-community>=0.3.0
+
+# LLM Provider — OpenRouter (FREE Llama 3.3 70B)
+langchain-openai>=0.2.0
+
+# Embeddings — HuggingFace (FREE, runs locally on your Mac)
+langchain-huggingface>=0.1.0
+sentence-transformers>=3.0.0
+
+# Vector Database
+chromadb>=0.5.0
+
+# Web Search Tool
+tavily-python>=0.5.0
+
+# API Layer
+fastapi>=0.115.0
+uvicorn>=0.30.0
+
+# PDF Export
+weasyprint>=62.0
+
+# Structured Output & Validation
+pydantic>=2.0.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# Text Splitting
+langchain-text-splitters>=0.3.0
+
+# HTTP Client
+httpx>=0.27.0
+
+# Tokenizer (for text splitting)
+tiktoken>=0.7.0

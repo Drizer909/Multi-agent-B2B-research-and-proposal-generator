@@ -1,0 +1,38 @@
+# ─── Environment & Secrets ───
+.env
+.env.*
+!.env.example
+
+# ─── Python ───
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ─── Virtual Environments ───
+venv/
+.venv/
+env/
+
+# ─── Databases & Storage ───
+chroma_db/
+*.db
+checkpoints.db
+
+# ─── Output ───
+output/
+
+# ─── IDE ───
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ─── Misc ───
+*.log
+tmp/
