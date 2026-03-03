@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-900 text-gray-100 antialiased;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-slate-800 border border-slate-700 rounded-xl p-6 shadow-xl;
+  }
+
+  .btn-primary {
+    @apply bg-blue-600 hover:bg-blue-500 text-white font-semibold
+           py-3 px-6 rounded-lg transition-all duration-200
+           disabled:opacity-50 disabled:cursor-not-allowed
+           focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2 focus:ring-offset-slate-900;
+  }
+
+  .btn-secondary {
+    @apply bg-slate-700 hover:bg-slate-600 text-gray-200 font-medium
+           py-2 px-4 rounded-lg transition-all duration-200
+           border border-slate-600 hover:border-slate-500;
+  }
+
+  .input-field {
+    @apply w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3
+           text-gray-100 placeholder-gray-400
+           focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
+           transition-all duration-200;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Markdown content styling */
+.prose-proposal h1 {
+  @apply text-2xl font-bold text-white mt-8 mb-4 pb-2 border-b border-slate-700;
+}
+.prose-proposal h2 {
+  @apply text-xl font-semibold text-blue-400 mt-6 mb-3;
+}
+.prose-proposal h3 {
+  @apply text-lg font-medium text-gray-200 mt-4 mb-2;
+}
+.prose-proposal p {
+  @apply text-gray-300 mb-4 leading-relaxed;
+}
+.prose-proposal ul {
+  @apply list-disc list-outside space-y-2 mb-4 text-gray-300 ml-5;
+}
+.prose-proposal ol {
+  @apply list-decimal list-outside space-y-2 mb-4 text-gray-300 ml-5;
+}
+.prose-proposal strong {
+  @apply text-white font-semibold;
+}
+.prose-proposal blockquote {
+  @apply border-l-4 border-blue-500 bg-slate-800/50 px-4 py-3 my-4 italic text-gray-300 rounded-r-lg;
+}
+.prose-proposal hr {
+  @apply border-slate-700 my-8;
+}
+.prose-proposal table {
+  @apply w-full border-collapse mb-6;
+}
+.prose-proposal th {
+  @apply bg-slate-700 px-4 py-2 text-left text-sm font-semibold text-gray-200 border border-slate-600;
+}
+.prose-proposal td {
+  @apply px-4 py-2 text-sm text-gray-300 border border-slate-600;
+}

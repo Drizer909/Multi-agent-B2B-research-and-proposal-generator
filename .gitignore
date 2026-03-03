@@ -36,3 +36,7 @@ output/
 # ─── Misc ───
 *.log
 tmp/
+frontend/node_modules/
+frontend/.next/
+node_modules/
+.next/
