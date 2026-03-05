@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+venv/
+.env
+.git
+.gitignore
+frontend/node_modules/
+frontend/.next/
+chroma_db/
+checkpoints.db
+output/
+downloads/
