@@ -21,6 +21,8 @@ env/
 # ─── Databases & Storage ───
 chroma_db/
 *.db
+*.db-shm
+*.db-wal
 checkpoints.db
 
 # ─── Output ───
