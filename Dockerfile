@@ -25,4 +25,4 @@ COPY . .
 EXPOSE 8000
 
 # Start the application using the existing run script
-CMD ["python", "scripts/run_api.py", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "scripts/run_api.py", "--host", "0.0.0.0"]
