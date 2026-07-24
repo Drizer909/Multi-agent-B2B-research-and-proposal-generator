@@ -5,9 +5,9 @@ Wires together Research, Analysis, Writing, and QA agents into a
 directed graph with persistence and conditional routing.
 """
 
-import time
 from datetime import datetime, timezone
 from typing import Literal
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
 
@@ -175,7 +175,7 @@ def run_proposal(company_name: str, user_request: str, requestor_name: str = "Sa
     initial_state = create_initial_state(company_name, user_request, requestor_name)
     app = build_graph_no_interrupt()
     
-    thread_id = f"proposal_{int(time.time())}"
+    thread_id = f"proposal_{uuid4().hex}"
     config = {"configurable": {"thread_id": thread_id}}
     
     print(f"\n  Starting Thread: {thread_id}")
@@ -194,7 +194,7 @@ def run_proposal_with_review(company_name: str, user_request: str, requestor_nam
     initial_state = create_initial_state(company_name, user_request, requestor_name)
     app = build_graph()
     
-    thread_id = f"review_{int(time.time())}"
+    thread_id = f"review_{uuid4().hex}"
     config = {"configurable": {"thread_id": thread_id}}
     
     print(f"\n  Starting Review Thread: {thread_id}")

@@ -76,6 +76,10 @@ def writing_agent(state: ProposalState) -> dict:
     pain_points = state.get("pain_points", [])
     user_request = state.get("user_request", "")
     requestor_name = state.get("requestor_name", "")
+    qa_result = state.get("qa_result", {})
+    revision_history = state.get("revision_history", [])
+    revision_count = state.get("revision_count", 0)
+    human_feedback = state.get("human_feedback", "")
 
     print("\n" + "=" * 60)
     print("  ✍️  WRITING AGENT — Starting")
@@ -106,6 +110,19 @@ def writing_agent(state: ProposalState) -> dict:
             for cs in matched_case_studies
         )
 
+        revision_guidance = ""
+        if revision_count > 0 or human_feedback:
+            revision_guidance = (
+                "\nREVISION GUIDANCE:\n"
+                f"  Revision number: {revision_count}\n"
+                f"  QA critical issues: {json.dumps(qa_result.get('critical_issues', []))}\n"
+                f"  QA minor issues: {json.dumps(qa_result.get('minor_issues', []))}\n"
+                f"  QA suggestions: {json.dumps(qa_result.get('suggestions', []))}\n"
+                f"  Revision history: {json.dumps(revision_history)}\n"
+                f"  Human feedback: {human_feedback or 'None'}\n"
+                "Address this feedback explicitly while preserving accurate content.\n"
+            )
+
         writing_brief = (
             f"Write a complete business proposal with these details:\n\n"
             f"PROSPECT: {company_name}\n"
@@ -124,7 +141,8 @@ def writing_agent(state: ProposalState) -> dict:
             f"  Summary: {solution_mapping.get('fit_summary', 'N/A')}\n"
             f"  Package: {solution_mapping.get('recommended_package', 'N/A')}\n"
             f"  Timeline: {solution_mapping.get('estimated_timeline', 'N/A')}\n"
-            f"  Value: {solution_mapping.get('estimated_value', 'N/A')}\n\n"
+            f"  Value: {solution_mapping.get('estimated_value', 'N/A')}\n"
+            f"{revision_guidance}\n"
             f"Write each of the {len(ProposalConfig.SECTIONS)} required sections. "
             f"Return as a JSON object with section names as keys."
         )
