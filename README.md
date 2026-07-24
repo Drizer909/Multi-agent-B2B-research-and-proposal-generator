@@ -96,3 +96,18 @@ Visit `http://localhost:3000` to start generating.
 
 ---
 *Built with ❤️ for High-Performance Sales Teams.*
+
+
+## Production deployment
+
+The root `Dockerfile` builds the Next.js frontend and FastAPI backend into one
+same-origin image. Configure `OPENROUTER_API_KEY` and `TAVILY_API_KEY`, then
+mount a persistent disk at `/app/storage`. The container honors the platform's
+`PORT` variable, serves the UI from `/`, exposes diagnostics at `/health`,
+readiness at `/health/ready`, and a lightweight container liveness probe at
+`/health/live`.
+
+For a separately hosted frontend, provide `API_URL` as a frontend **build-time**
+variable so Next.js can compile the `/api/*` proxy target. Alternatively, set
+`NEXT_PUBLIC_API_URL` at frontend build time to the public backend URL and add
+the frontend origin to the backend's comma-separated `CORS_ORIGINS` setting.

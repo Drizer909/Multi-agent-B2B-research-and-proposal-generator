@@ -12,6 +12,7 @@ Usage:
     filepath, size = export_to_markdown("# My Proposal...", "Stripe")
 """
 
+import html as html_lib
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -231,7 +232,7 @@ def _simple_md_to_html(text: str) -> str:
         match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if match:
             level = len(match.group(1))
-            content = match.group(2)
+            content = html_lib.escape(match.group(2))
             html_lines.append(f"<h{level}>{content}</h{level}>")
             continue
 
@@ -240,7 +241,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_blockquote:
                 html_lines.append("<blockquote>")
                 in_blockquote = True
-            html_lines.append(stripped[2:])
+            html_lines.append(html_lib.escape(stripped[2:]))
             continue
 
         # Unordered list
@@ -248,7 +249,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_list:
                 html_lines.append("<ul>")
                 in_list = True
-            content = stripped[2:]
+            content = html_lib.escape(stripped[2:])
             html_lines.append(f"  <li>{content}</li>")
             continue
 
@@ -258,7 +259,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_ordered_list:
                 html_lines.append("<ol>")
                 in_ordered_list = True
-            content = ol_match.group(2)
+            content = html_lib.escape(ol_match.group(2))
             html_lines.append(f"  <li>{content}</li>")
             continue
 
@@ -268,7 +269,7 @@ def _simple_md_to_html(text: str) -> str:
             continue
 
         # Regular paragraph
-        html_lines.append(f"<p>{stripped}</p>")
+        html_lines.append(f"<p>{html_lib.escape(stripped)}</p>")
 
     # Close any open lists
     if in_list: html_lines.append("</ul>")
@@ -290,6 +291,9 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
     Convert proposal Markdown to a full styled HTML document.
     """
     body_html = _simple_md_to_html(markdown_text)
+    safe_company_name = html_lib.escape(company_name)
+    safe_provider_name = html_lib.escape(ProposalConfig.YOUR_COMPANY_NAME)
+    safe_provider_tagline = html_lib.escape(ProposalConfig.YOUR_COMPANY_TAGLINE)
     now = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     return f"""<!DOCTYPE html>
@@ -297,17 +301,17 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Business Proposal — {company_name}</title>
+    <title>Business Proposal — {safe_company_name}</title>
     <style>
 {PROPOSAL_CSS}
     </style>
 </head>
 <body>
     <div class="proposal-header">
-        <h1>{ProposalConfig.YOUR_COMPANY_NAME}</h1>
-        <p class="tagline">{ProposalConfig.YOUR_COMPANY_TAGLINE}</p>
+        <h1>{safe_provider_name}</h1>
+        <p class="tagline">{safe_provider_tagline}</p>
         <hr style="border-color: rgba(255,255,255,0.2); margin: 15px 60px;">
-        <p class="meta">Business Proposal for <strong>{company_name}</strong></p>
+        <p class="meta">Business Proposal for <strong>{safe_company_name}</strong></p>
         <p class="meta">Prepared: {now}</p>
     </div>
 
@@ -316,7 +320,7 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
     <hr>
     <p style="text-align: center; color: #999; font-size: 9pt;">
         This document is confidential and intended solely for the named recipient.
-        <br>© {datetime.now().year} {ProposalConfig.YOUR_COMPANY_NAME}. All rights reserved.
+        <br>© {datetime.now().year} {safe_provider_name}. All rights reserved.
     </p>
 </body>
 </html>"""
@@ -327,13 +331,16 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
 # ──────────────────────────────────────────────
 
 def _generate_filename(company_name: str, extension: str, custom_name: str = "") -> str:
-    """Generate a safe filename."""
+    """Generate a basename-only filename with a controlled extension."""
     if custom_name:
-        if not custom_name.endswith(f".{extension}"):
-            custom_name = f"{custom_name}.{extension}"
-        return custom_name
+        basename = Path(custom_name.replace("\\", "/")).name
+        safe_stem = re.sub(r"[^\w\s-]", "", Path(basename).stem).strip()
+        safe_stem = re.sub(r"\s+", "_", safe_stem)
+        if safe_stem:
+            return f"{safe_stem}.{extension}"
 
-    safe_name = re.sub(r"[^\w\s-]", "", company_name).strip().replace(" ", "_").lower()
+    safe_name = re.sub(r"[^\w\s-]", "", company_name).strip()
+    safe_name = re.sub(r"\s+", "_", safe_name).lower() or "company"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{safe_name}_proposal_{timestamp}.{extension}"
 

@@ -40,5 +40,7 @@ output/
 tmp/
 frontend/node_modules/
 frontend/.next/
+frontend/out/
+frontend/tsconfig.tsbuildinfo
 node_modules/
 .next/

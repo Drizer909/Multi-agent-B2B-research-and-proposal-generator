@@ -13,18 +13,20 @@ Endpoints:
 """
 
 import asyncio
+import os
+import re
 import time
 import traceback
 from pathlib import Path
+from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
 from src.api.models import (
     AsyncJobResponse,
     ErrorResponse,
     ExportRequest,
-    ExportResponse,
     HealthResponse,
     ProposalRequest,
     ProposalResponse,
@@ -47,6 +49,20 @@ router = APIRouter()
 
 # Structure: { thread_id: { "status": "...", "result": {...}, "error": "..." } }
 _jobs: dict[str, dict] = {}
+_recovery_graph = None
+
+
+def _get_persisted_state(thread_id: str) -> dict:
+    """Load the latest LangGraph state using the public API job ID."""
+    global _recovery_graph
+    if _recovery_graph is None:
+        from src.graph.workflow import build_graph_no_interrupt
+
+        _recovery_graph = build_graph_no_interrupt()
+
+    config = {"configurable": {"thread_id": thread_id}}
+    snapshot = _recovery_graph.get_state(config)
+    return dict(snapshot.values) if snapshot and snapshot.values else {}
 
 
 # ══════════════════════════════════════════════
@@ -59,26 +75,59 @@ _jobs: dict[str, dict] = {}
     summary="System health check",
     tags=["System"],
 )
-async def health_check():
-    """
-    Check API health, API key status, and rate limit remaining.
-    """
+async def health_check(request: Request):
+    """Report provider, writable-storage, and knowledge-base readiness."""
     api_keys = APIKeys.validate()
     capabilities = get_export_capabilities()
+    rag_ready = bool(getattr(request.app.state, "rag_ready", False))
+    rag_error = str(getattr(request.app.state, "rag_error", ""))
+    rag_count = int(getattr(request.app.state, "rag_document_count", 0))
+    writable_paths = [
+        StorageConfig.STORAGE_DIR,
+        Path(StorageConfig.CHROMA_PERSIST_DIR),
+        Path(StorageConfig.SQLITE_CHECKPOINT_PATH).parent,
+        StorageConfig.OUTPUT_DIR,
+    ]
+    storage_ready = all(
+        path.is_dir() and os.access(path, os.W_OK) for path in writable_paths
+    )
+    ready = all([
+        api_keys.get("openrouter", False),
+        api_keys.get("tavily", False),
+        rag_ready,
+        storage_ready,
+    ])
 
     return HealthResponse(
-        status="healthy",
-        version="1.0.0",
+        status="healthy" if ready else "degraded",
+        version="1.1.0",
         api_keys=api_keys,
         requests_remaining=rate_limiter.requests_remaining_today,
         components={
             "llm": "active" if api_keys.get("openrouter") else "not configured",
-            "search": "tavily" if api_keys.get("tavily") else "not configured",
-            "vector_db": "chromadb",
+            "search": "active" if api_keys.get("tavily") else "not configured",
+            "vector_db": "ready" if rag_ready else "not ready",
+            "vector_chunks": rag_count,
+            "vector_error": rag_error,
+            "storage": "writable" if storage_ready else "not writable",
             "export_pdf": capabilities["pdf"],
             "export_html": capabilities["html"],
         },
     )
+
+
+@router.get(
+    "/health/ready",
+    response_model=HealthResponse,
+    summary="Deployment readiness check",
+    tags=["System"],
+)
+async def readiness_check(request: Request, response: Response):
+    """Return HTTP 503 until required providers and local storage are ready."""
+    health = await health_check(request)
+    if health.status != "healthy":
+        response.status_code = 503
+    return health
 
 
 # ══════════════════════════════════════════════
@@ -113,10 +162,12 @@ async def generate_proposal(request: ProposalRequest):
         )
 
         if result.get("error"):
-             raise HTTPException(status_code=500, detail=result["error"])
+            raise HTTPException(status_code=500, detail=result["error"])
 
         return ProposalResponse.from_state(result)
 
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
@@ -140,6 +191,7 @@ def _run_pipeline_job(thread_id: str, company_name: str, user_request: str, requ
             company_name=company_name,
             user_request=user_request,
             requestor_name=requestor_name,
+            thread_id=thread_id,
         )
 
         if result.get("error"):
@@ -165,8 +217,8 @@ async def generate_proposal_async(request: ProposalRequest):
     """
     Start proposal generation in the background.
     """
-    safe_name = request.company_name.lower().replace(" ", "_").replace("/", "_")
-    thread_id = f"async_{safe_name}_{int(time.time())}"
+    safe_name = re.sub(r"[^a-z0-9_-]+", "_", request.company_name.lower()).strip("_") or "company"
+    thread_id = f"async_{safe_name[:40]}_{uuid4().hex}"
 
     _jobs[thread_id] = {
         "status": "queued",
@@ -204,42 +256,49 @@ async def generate_proposal_async(request: ProposalRequest):
     tags=["Proposal"],
 )
 async def get_proposal_status(thread_id: str):
-    """Check the status of a background proposal generation job."""
+    """Return process-local status, optionally enriched from a checkpoint."""
     if thread_id in _jobs:
         job = _jobs[thread_id]
-        result = job.get("result") or {}
+        persisted = {}
+        if job["status"] in {"queued", "running"}:
+            try:
+                persisted = await asyncio.to_thread(_get_persisted_state, thread_id)
+            except Exception:
+                # A temporary SQLite problem must not hide an active memory job.
+                pass
+
+        result = job.get("result") or persisted
         return ProposalStatusResponse(
             thread_id=thread_id,
             status=job["status"],
-            current_phase=result.get("current_phase", "") if isinstance(result, dict) else "",
-            company_name=job.get("company_name", ""),
-            qa_score=result.get("qa_score", 0.0) if isinstance(result, dict) else 0.0,
-            revision_count=result.get("revision_count", 0) if isinstance(result, dict) else 0,
-            approved=result.get("approved", False) if isinstance(result, dict) else False,
-            error=job.get("error", ""),
+            current_phase=result.get("current_phase", ""),
+            company_name=job.get("company_name") or result.get("company_name", ""),
+            qa_score=result.get("qa_score", 0.0),
+            revision_count=result.get("revision_count", 0),
+            approved=result.get("approved", False),
+            error=job.get("error") or result.get("error", ""),
         )
 
-    # Fallback to SQLite checkpointer if memory was reset (e.g. server restart)
     try:
-        from src.graph.workflow import build_graph_no_interrupt
-        app = build_graph_no_interrupt()
-        config = {"configurable": {"thread_id": thread_id}}
-        state = app.get_state(config)
-        if state and state.values:
-            val = state.values
-            phase = val.get("current_phase", "")
-            return ProposalStatusResponse(
-                thread_id=thread_id,
-                status="completed" if phase == "completed" else "running",
-                current_phase=phase,
-                company_name=val.get("company_name", ""),
-                qa_score=val.get("qa_score", 0.0),
-                revision_count=val.get("revision_count", 0),
-                approved=val.get("approved", False),
-                error=val.get("error", ""),
-            )
-    except Exception:
-        pass
+        persisted = await asyncio.to_thread(_get_persisted_state, thread_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Checkpoint storage unavailable") from exc
+
+    if persisted:
+        phase = persisted.get("current_phase", "")
+        completed = phase == "completed" and not persisted.get("error")
+        return ProposalStatusResponse(
+            thread_id=thread_id,
+            status="completed" if completed else "failed",
+            current_phase=phase,
+            company_name=persisted.get("company_name", ""),
+            qa_score=persisted.get("qa_score", 0.0),
+            revision_count=persisted.get("revision_count", 0),
+            approved=persisted.get("approved", False),
+            error=persisted.get("error", "") or (
+                "Generation was interrupted by a server restart" if not completed else ""
+            ),
+        )
 
     raise HTTPException(status_code=404, detail="Job not found")
 
@@ -255,7 +314,7 @@ async def get_proposal_status(thread_id: str):
     tags=["Proposal"],
 )
 async def get_proposal_result(thread_id: str):
-    """Get the full result of a completed proposal generation job."""
+    """Return only a completed proposal, including after a process restart."""
     if thread_id in _jobs:
         job = _jobs[thread_id]
         if job["status"] in ["running", "queued"]:
@@ -264,18 +323,18 @@ async def get_proposal_result(thread_id: str):
             raise HTTPException(status_code=500, detail=f"Job failed: {job.get('error')}")
         return ProposalResponse.from_state(job.get("result", {}))
 
-    # Fallback to SQLite checkpointer
     try:
-        from src.graph.workflow import build_graph_no_interrupt
-        app = build_graph_no_interrupt()
-        config = {"configurable": {"thread_id": thread_id}}
-        state = app.get_state(config)
-        if state and state.values:
-            return ProposalResponse.from_state(state.values)
-    except Exception:
-        pass
+        persisted = await asyncio.to_thread(_get_persisted_state, thread_id)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Checkpoint storage unavailable") from exc
+    if not persisted:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if persisted.get("error"):
+        raise HTTPException(status_code=500, detail=f"Job failed: {persisted['error']}")
+    if persisted.get("current_phase") != "completed":
+        raise HTTPException(status_code=409, detail="Job was interrupted before completion")
 
-    raise HTTPException(status_code=404, detail="Job not found")
+    return ProposalResponse.from_state(persisted)
 
 
 
@@ -364,14 +423,19 @@ async def export_md(request: ExportRequest):
     tags=["Export"],
 )
 async def download_file(filename: str):
-    """Download an exported file from the output directory."""
-    filepath = StorageConfig.OUTPUT_DIR / filename
-    if not filepath.exists():
+    """Download an exported file without allowing output-directory traversal."""
+    output_dir = StorageConfig.OUTPUT_DIR.resolve()
+    filepath = (output_dir / Path(filename).name).resolve()
+    if not filepath.is_relative_to(output_dir) or not filepath.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
     suffix = filepath.suffix.lower()
     media_types = {".pdf": "application/pdf", ".html": "text/html", ".md": "text/markdown"}
-    return FileResponse(path=str(filepath), filename=filename, media_type=media_types.get(suffix, "application/octet-stream"))
+    return FileResponse(
+        path=str(filepath),
+        filename=filepath.name,
+        media_type=media_types.get(suffix, "application/octet-stream"),
+    )
 
 
 # ══════════════════════════════════════════════
