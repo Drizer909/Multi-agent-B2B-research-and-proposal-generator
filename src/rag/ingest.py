@@ -8,12 +8,14 @@ Usage:
     python -m src.rag.ingest
 """
 
+import fcntl
+import hashlib
 import re
 from pathlib import Path
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from src.config import RAGConfig, StorageConfig
+from src.config import ModelConfig, RAGConfig, StorageConfig
 from src.rag.embeddings import get_vector_store
 
 
@@ -104,7 +106,7 @@ def scan_data_directories() -> list[dict]:
 # Main Ingestion Function
 # ──────────────────────────────────────────────
 
-def ingest_documents() -> int:
+def ingest_documents(vector_store=None) -> int:
     """
     Full ingestion pipeline:
     1. Scan data directories for .md files
@@ -152,7 +154,7 @@ def ingest_documents() -> int:
     # Step 3: Clear existing collection and store
     print("\n💾 Step 3: Embedding and storing in ChromaDB...")
 
-    vector_store = get_vector_store()
+    vector_store = vector_store or get_vector_store()
 
     # Clear existing data to avoid duplicates on re-ingestion
     existing = vector_store.get()
@@ -187,6 +189,57 @@ def ingest_documents() -> int:
     print("=" * 55)
 
     return len(all_texts)
+
+
+def _corpus_fingerprint() -> str:
+    """Hash source documents and embedding/chunk settings that shape the index."""
+    digest = hashlib.sha256()
+    settings = (
+        ModelConfig.EMBEDDING_MODEL,
+        ModelConfig.EMBEDDING_MODEL_REVISION,
+        str(RAGConfig.CHUNK_SIZE),
+        str(RAGConfig.CHUNK_OVERLAP),
+        RAGConfig.COLLECTION_NAME,
+    )
+    digest.update("\0".join(settings).encode("utf-8"))
+
+    for path in sorted(StorageConfig.DATA_DIR.rglob("*.md")):
+        digest.update(str(path.relative_to(StorageConfig.DATA_DIR)).encode("utf-8"))
+        digest.update(path.read_bytes())
+
+    return digest.hexdigest()
+
+
+def ensure_documents_ingested() -> int:
+    """Create or refresh the index under a cross-process filesystem lock."""
+    lock_path = StorageConfig.STORAGE_DIR / ".rag-ingest.lock"
+    fingerprint_path = Path(StorageConfig.CHROMA_PERSIST_DIR) / ".corpus.sha256"
+    expected_fingerprint = _corpus_fingerprint()
+
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+
+        vector_store = get_vector_store()
+        existing = vector_store.get(include=[])
+        existing_count = len(existing.get("ids", [])) if existing else 0
+        current_fingerprint = (
+            fingerprint_path.read_text(encoding="utf-8").strip()
+            if fingerprint_path.is_file()
+            else ""
+        )
+
+        if existing_count and current_fingerprint == expected_fingerprint:
+            print(f"  Knowledge base already contains {existing_count} current chunks")
+            return existing_count
+
+        if existing_count:
+            print("  Knowledge base sources changed; rebuilding the index")
+        fingerprint_path.unlink(missing_ok=True)
+        count = ingest_documents(vector_store=vector_store)
+        if count:
+            fingerprint_path.write_text(expected_fingerprint, encoding="utf-8")
+        return count
 
 
 # ──────────────────────────────────────────────

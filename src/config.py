@@ -33,6 +33,16 @@ ENV_PATH = PROJECT_ROOT / ".env"
 load_dotenv(ENV_PATH)
 
 
+def _resolve_path(value: str | Path) -> Path:
+    """Resolve relative deployment paths from the project root."""
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else PROJECT_ROOT / path
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ──────────────────────────────────────────────
 # API Keys
 # ──────────────────────────────────────────────
@@ -106,6 +116,10 @@ class ModelConfig:
     # ─── Embeddings: HuggingFace (local, free) ───
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "huggingface")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    EMBEDDING_MODEL_REVISION: str = os.getenv(
+        "EMBEDDING_MODEL_REVISION",
+        "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+    )
     EMBEDDING_DIMENSIONS: int = 384  # all-MiniLM-L6-v2 outputs 384-dim vectors
 
     @classmethod
@@ -147,39 +161,72 @@ class ModelConfig:
 
         return HuggingFaceEmbeddings(
             model_name=cls.EMBEDDING_MODEL,
-            model_kwargs={"device": "cpu"},
+            model_kwargs={"device": "cpu", "revision": cls.EMBEDDING_MODEL_REVISION},
             encode_kwargs={"normalize_embeddings": True},
         )
 
 
 # ──────────────────────────────────────────────
+# Runtime / Deployment Configuration
+# ──────────────────────────────────────────────
+class RuntimeConfig:
+    """Production server and deployment settings."""
+
+    AUTO_INGEST: bool = _env_bool("AUTO_INGEST", True)
+    FRONTEND_STATIC_DIR: Path = _resolve_path(
+        os.getenv("FRONTEND_STATIC_DIR", str(PROJECT_ROOT / "frontend" / "out"))
+    )
+    CORS_ORIGINS: tuple[str, ...] = tuple(
+        origin.strip().rstrip("/")
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+        if origin.strip()
+    )
+
+
+# ──────────────────────────────────────────────
 # Database / Storage Paths
 # ──────────────────────────────────────────────
-class StorageConfig:
-    """File paths for databases and storage."""
+_CONFIGURED_STORAGE_DIR = os.getenv("STORAGE_DIR")
+_DEFAULT_STORAGE_DIR = _resolve_path(_CONFIGURED_STORAGE_DIR or "storage")
 
-    CHROMA_PERSIST_DIR: str = os.getenv(
-        "CHROMA_PERSIST_DIR", str(PROJECT_ROOT / "chroma_db")
+
+def _storage_path(env_name: str, storage_name: str, legacy_name: str) -> Path:
+    """Use explicit paths first and preserve legacy defaults during upgrades."""
+    configured = os.getenv(env_name)
+    if configured:
+        return _resolve_path(configured)
+
+    legacy_path = PROJECT_ROOT / legacy_name
+    if _CONFIGURED_STORAGE_DIR is None and legacy_path.exists():
+        return legacy_path
+
+    return _DEFAULT_STORAGE_DIR / storage_name
+
+
+class StorageConfig:
+    """Persistent file paths, all configurable from one storage root."""
+
+    STORAGE_DIR: Path = _DEFAULT_STORAGE_DIR
+    CHROMA_PERSIST_DIR: str = str(
+        _storage_path("CHROMA_PERSIST_DIR", "chroma_db", "chroma_db")
     )
-    SQLITE_CHECKPOINT_PATH: str = os.getenv(
-        "SQLITE_CHECKPOINT_PATH", str(PROJECT_ROOT / "checkpoints.db")
+    SQLITE_CHECKPOINT_PATH: str = str(
+        _storage_path("SQLITE_CHECKPOINT_PATH", "checkpoints.db", "checkpoints.db")
     )
+    OUTPUT_DIR: Path = _storage_path("OUTPUT_DIR", "output", "output")
 
     DATA_DIR: Path = PROJECT_ROOT / "data"
     CASE_STUDIES_DIR: Path = DATA_DIR / "case_studies"
     PRODUCT_DOCS_DIR: Path = DATA_DIR / "product_docs"
     TEMPLATES_DIR: Path = DATA_DIR / "templates"
-    OUTPUT_DIR: Path = PROJECT_ROOT / "output"
 
     @classmethod
     def ensure_directories(cls) -> None:
-        """Create all required directories if they don't exist."""
+        """Create all required writable directories if they do not exist."""
         for dir_path in [
+            cls.STORAGE_DIR,
             Path(cls.CHROMA_PERSIST_DIR),
-            cls.DATA_DIR,
-            cls.CASE_STUDIES_DIR,
-            cls.PRODUCT_DOCS_DIR,
-            cls.TEMPLATES_DIR,
+            Path(cls.SQLITE_CHECKPOINT_PATH).parent,
             cls.OUTPUT_DIR,
         ]:
             dir_path.mkdir(parents=True, exist_ok=True)

@@ -1,11 +1,12 @@
 /**
  * API Client — All fetch functions that call the FastAPI backend.
  *
- * Uses Next.js rewrite proxy (/api/* → localhost:8000/*)
- * OR direct calls via NEXT_PUBLIC_API_URL env var.
+ * Uses the same-origin Next.js rewrite proxy by default, or direct calls when
+ * NEXT_PUBLIC_API_URL is explicitly set. The unified Docker image sets the
+ * variable to an empty string so the static UI calls its FastAPI origin.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "/api").replace(/\/$/, "");
 
 // ─── Types ───────────────────────────────────────
 
