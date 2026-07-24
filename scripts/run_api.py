@@ -24,11 +24,16 @@ def main():
     print("  B2B PROPOSAL GENERATOR — API Server")
     print("🌐" * 30)
 
+    # Auto-reload should be OFF in production (e.g., inside Docker or on Render)
+    # to prevent WatchFiles from restarting the app when ChromaDB/SQLite files are written.
+    env_reload = os.environ.get("RELOAD", "false").lower() == "true"
+    should_reload = env_reload if not args.no_reload else False
+
     uvicorn.run(
         "src.api.app:app",
         host=args.host,
         port=args.port,
-        reload=not args.no_reload,
+        reload=should_reload,
     )
 
 if __name__ == "__main__":

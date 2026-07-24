@@ -40,6 +40,17 @@ class ProposalRequest(BaseModel):
         description="Optional email for the requestor",
     )
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "company_name": "Stripe",
+                "user_request": "Proposal for payment optimization and customer churn analytics",
+                "requestor_name": "Sales Engineering Team",
+                "requestor_email": "sales@nexusai.com"
+            }
+        }
+    }
+
 
 class ExportRequest(BaseModel):
     """Input for exporting a proposal to PDF/Markdown."""

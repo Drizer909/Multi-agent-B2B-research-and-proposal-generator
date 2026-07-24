@@ -24,5 +24,5 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8000
 
-# Start the application using the existing run script
-CMD ["python", "scripts/run_api.py", "--host", "0.0.0.0"]
+# Start the application using the existing run script (with auto-reload disabled for production stability)
+CMD ["python", "scripts/run_api.py", "--host", "0.0.0.0", "--no-reload"]

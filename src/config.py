@@ -16,11 +16,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Suppress urllib3 SSL warnings (specifically LibreSSL on macOS)
+# Suppress urllib3 SSL warnings and HuggingFace Hub unauthenticated warnings
 try:
     import urllib3
     from urllib3.exceptions import NotOpenSSLWarning
     warnings.filterwarnings("ignore", category=NotOpenSSLWarning)
+    warnings.filterwarnings("ignore", message=".*unauthenticated requests to the HF Hub.*")
 except ImportError:
     pass
 
