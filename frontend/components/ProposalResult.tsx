@@ -7,9 +7,18 @@ interface Props {
     result: ProposalResultType;
 }
 
+function escapeHtml(value: string): string {
+    return value
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
 function renderMarkdown(md: string): string {
-    // Enhanced micro-parser for proposal rendering
-    let html = md
+    // Escape untrusted model/retrieval output before adding our own markup.
+    let html = escapeHtml(md)
         .replace(/^### (.+)$/gm, '<h3 class="text-lg font-bold text-slate-200 mt-6 mb-3">$1</h3>')
         .replace(/^## (.+)$/gm, '<h2 class="text-xl font-bold text-blue-400 mt-8 mb-4 border-l-4 border-blue-600 pl-4">$1</h2>')
         .replace(/^# (.+)$/gm, '<h1 class="text-3xl font-black text-white mt-12 mb-8 pb-4 border-b-2 border-slate-800">$1</h1>')
@@ -87,7 +96,7 @@ export default function ProposalResult({ result }: Props) {
                     <div className="card bg-slate-950/40 p-10 relative">
                         <div className="absolute top-6 right-6 flex items-center gap-2">
                             <span className="w-2 h-2 rounded-full bg-green-500" />
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">Verified Content</span>
+                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">AI-Generated Draft</span>
                         </div>
                         <div
                             className="prose-proposal prose-invert max-w-none scroll-smooth"

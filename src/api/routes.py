@@ -14,6 +14,7 @@ Endpoints:
 
 import asyncio
 import time
+import uuid
 import traceback
 from pathlib import Path
 
@@ -166,7 +167,7 @@ async def generate_proposal_async(request: ProposalRequest):
     Start proposal generation in the background.
     """
     safe_name = request.company_name.lower().replace(" ", "_").replace("/", "_")
-    thread_id = f"async_{safe_name}_{int(time.time())}"
+    thread_id = f"async_{safe_name}_{uuid.uuid4().hex}"
 
     _jobs[thread_id] = {
         "status": "queued",

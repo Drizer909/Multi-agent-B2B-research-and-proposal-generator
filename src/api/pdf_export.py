@@ -3,15 +3,16 @@ Proposal export — Markdown → PDF (or HTML fallback).
 
 WeasyPrint requires system dependencies (cairo, pango, etc.)
 that may not be available on all systems. This module handles
-that gracefully with a fallback chain:
+that gracefully with an HTML fallback:
 
-    PDF (WeasyPrint) → HTML file → Markdown file
+    PDF (WeasyPrint) → HTML file
 
 Usage:
     filepath, size = export_to_pdf("# My Proposal...", "Stripe")
     filepath, size = export_to_markdown("# My Proposal...", "Stripe")
 """
 
+import html
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -202,7 +203,7 @@ def _simple_md_to_html(text: str) -> str:
     """
     Convert basic Markdown to HTML without external dependencies.
     """
-    lines = text.split("\n")
+    lines = html.escape(text, quote=True).split("\n")
     html_lines = []
     in_list = False
     in_ordered_list = False
@@ -275,14 +276,14 @@ def _simple_md_to_html(text: str) -> str:
     if in_ordered_list: html_lines.append("</ol>")
     if in_blockquote: html_lines.append("</blockquote>")
 
-    html = "\n".join(html_lines)
+    rendered_html = "\n".join(html_lines)
 
     # Inline formatting
-    html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
-    html = re.sub(r"\*(.+?)\*", r"<em>\1</em>", html)
-    html = re.sub(r"`(.+?)`", r"<code>\1</code>", html)
+    rendered_html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", rendered_html)
+    rendered_html = re.sub(r"\*(.+?)\*", r"<em>\1</em>", rendered_html)
+    rendered_html = re.sub(r"`(.+?)`", r"<code>\1</code>", rendered_html)
 
-    return html
+    return rendered_html
 
 
 def markdown_to_html(markdown_text: str, company_name: str) -> str:
@@ -291,23 +292,26 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
     """
     body_html = _simple_md_to_html(markdown_text)
     now = datetime.now(timezone.utc).strftime("%B %d, %Y")
+    safe_company_name = html.escape(company_name, quote=True)
+    safe_brand_name = html.escape(ProposalConfig.YOUR_COMPANY_NAME, quote=True)
+    safe_tagline = html.escape(ProposalConfig.YOUR_COMPANY_TAGLINE, quote=True)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Business Proposal — {company_name}</title>
+    <title>Business Proposal — {safe_company_name}</title>
     <style>
 {PROPOSAL_CSS}
     </style>
 </head>
 <body>
     <div class="proposal-header">
-        <h1>{ProposalConfig.YOUR_COMPANY_NAME}</h1>
-        <p class="tagline">{ProposalConfig.YOUR_COMPANY_TAGLINE}</p>
+        <h1>{safe_brand_name}</h1>
+        <p class="tagline">{safe_tagline}</p>
         <hr style="border-color: rgba(255,255,255,0.2); margin: 15px 60px;">
-        <p class="meta">Business Proposal for <strong>{company_name}</strong></p>
+        <p class="meta">Business Proposal for <strong>{safe_company_name}</strong></p>
         <p class="meta">Prepared: {now}</p>
     </div>
 
@@ -316,7 +320,7 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
     <hr>
     <p style="text-align: center; color: #999; font-size: 9pt;">
         This document is confidential and intended solely for the named recipient.
-        <br>© {datetime.now().year} {ProposalConfig.YOUR_COMPANY_NAME}. All rights reserved.
+        <br>© {datetime.now().year} {safe_brand_name}. All rights reserved.
     </p>
 </body>
 </html>"""
@@ -327,11 +331,20 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
 # ──────────────────────────────────────────────
 
 def _generate_filename(company_name: str, extension: str, custom_name: str = "") -> str:
-    """Generate a safe filename."""
+    """Generate a filename that cannot escape the configured output directory."""
     if custom_name:
-        if not custom_name.endswith(f".{extension}"):
-            custom_name = f"{custom_name}.{extension}"
-        return custom_name
+        # Drop directory components and normalize the stem to prevent path traversal.
+        raw_name = Path(custom_name).name
+        expected_suffix = f".{extension}"
+        stem = (
+            raw_name[: -len(expected_suffix)]
+            if raw_name.lower().endswith(expected_suffix)
+            else raw_name
+        )
+        safe_stem = re.sub(r"[^\w\s-]", "", stem).strip().replace(" ", "_")
+        if not safe_stem:
+            raise ValueError("Custom filename must contain at least one letter or number")
+        return f"{safe_stem}.{extension}"
 
     safe_name = re.sub(r"[^\w\s-]", "", company_name).strip().replace(" ", "_").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -395,14 +408,7 @@ def export_to_markdown(
     output_dir = StorageConfig.OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now(timezone.utc).strftime("%B %d, %Y")
-    header = (
-        f"# Business Proposal for {company_name}\n"
-        f"**Prepared by:** {ProposalConfig.YOUR_COMPANY_NAME}\n"
-        f"**Date:** {now}\n\n---\n\n"
-    )
-
-    full_content = header + markdown_text
+    full_content = markdown_text
     fname = _generate_filename(company_name, "md", filename)
     filepath = output_dir / fname
 
