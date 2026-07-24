@@ -205,22 +205,43 @@ async def generate_proposal_async(request: ProposalRequest):
 )
 async def get_proposal_status(thread_id: str):
     """Check the status of a background proposal generation job."""
-    if thread_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
+    if thread_id in _jobs:
+        job = _jobs[thread_id]
+        result = job.get("result") or {}
+        return ProposalStatusResponse(
+            thread_id=thread_id,
+            status=job["status"],
+            current_phase=result.get("current_phase", "") if isinstance(result, dict) else "",
+            company_name=job.get("company_name", ""),
+            qa_score=result.get("qa_score", 0.0) if isinstance(result, dict) else 0.0,
+            revision_count=result.get("revision_count", 0) if isinstance(result, dict) else 0,
+            approved=result.get("approved", False) if isinstance(result, dict) else False,
+            error=job.get("error", ""),
+        )
 
-    job = _jobs[thread_id]
-    result = job.get("result") or {}
+    # Fallback to SQLite checkpointer if memory was reset (e.g. server restart)
+    try:
+        from src.graph.workflow import build_graph_no_interrupt
+        app = build_graph_no_interrupt()
+        config = {"configurable": {"thread_id": thread_id}}
+        state = app.get_state(config)
+        if state and state.values:
+            val = state.values
+            phase = val.get("current_phase", "")
+            return ProposalStatusResponse(
+                thread_id=thread_id,
+                status="completed" if phase == "completed" else "running",
+                current_phase=phase,
+                company_name=val.get("company_name", ""),
+                qa_score=val.get("qa_score", 0.0),
+                revision_count=val.get("revision_count", 0),
+                approved=val.get("approved", False),
+                error=val.get("error", ""),
+            )
+    except Exception:
+        pass
 
-    return ProposalStatusResponse(
-        thread_id=thread_id,
-        status=job["status"],
-        current_phase=result.get("current_phase", "") if isinstance(result, dict) else "",
-        company_name=job.get("company_name", ""),
-        qa_score=result.get("qa_score", 0.0) if isinstance(result, dict) else 0.0,
-        revision_count=result.get("revision_count", 0) if isinstance(result, dict) else 0,
-        approved=result.get("approved", False) if isinstance(result, dict) else False,
-        error=job.get("error", ""),
-    )
+    raise HTTPException(status_code=404, detail="Job not found")
 
 
 # ══════════════════════════════════════════════
@@ -235,19 +256,27 @@ async def get_proposal_status(thread_id: str):
 )
 async def get_proposal_result(thread_id: str):
     """Get the full result of a completed proposal generation job."""
-    if thread_id not in _jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
+    if thread_id in _jobs:
+        job = _jobs[thread_id]
+        if job["status"] in ["running", "queued"]:
+            raise HTTPException(status_code=202, detail=f"Job still {job['status']}")
+        if job["status"] == "failed":
+            raise HTTPException(status_code=500, detail=f"Job failed: {job.get('error')}")
+        return ProposalResponse.from_state(job.get("result", {}))
 
-    job = _jobs[thread_id]
+    # Fallback to SQLite checkpointer
+    try:
+        from src.graph.workflow import build_graph_no_interrupt
+        app = build_graph_no_interrupt()
+        config = {"configurable": {"thread_id": thread_id}}
+        state = app.get_state(config)
+        if state and state.values:
+            return ProposalResponse.from_state(state.values)
+    except Exception:
+        pass
 
-    if job["status"] in ["running", "queued"]:
-        raise HTTPException(status_code=202, detail=f"Job still {job['status']}")
+    raise HTTPException(status_code=404, detail="Job not found")
 
-    if job["status"] == "failed":
-        raise HTTPException(status_code=500, detail=f"Job failed: {job.get('error')}")
-
-    result = job.get("result", {})
-    return ProposalResponse.from_state(result)
 
 
 # ══════════════════════════════════════════════
