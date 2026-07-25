@@ -16,6 +16,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Set resource-conserving defaults for PyTorch & HuggingFace to stay under free tier memory limits
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MALLOC_TRIM_THRESHOLD_", "100000")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 # Suppress urllib3 SSL warnings and HuggingFace Hub unauthenticated warnings
 try:
     import urllib3
@@ -39,50 +44,58 @@ load_dotenv(ENV_PATH)
 class APIKeys:
     """All external API keys."""
 
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
-    TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
-    LANGCHAIN_API_KEY: str = os.getenv("LANGCHAIN_API_KEY", "")
+    @classmethod
+    def get_openrouter_key(cls) -> str:
+        return os.getenv("OPENROUTER_API_KEY", "")
+
+    @classmethod
+    def get_tavily_key(cls) -> str:
+        return os.getenv("TAVILY_API_KEY", "")
+
+    @classmethod
+    def get_langchain_key(cls) -> str:
+        return os.getenv("LANGCHAIN_API_KEY", "")
 
     @classmethod
     def validate(cls) -> dict[str, bool]:
         """Check which API keys are configured."""
+        key = cls.get_openrouter_key()
+        tavily = cls.get_tavily_key()
         return {
             "openrouter": bool(
-                cls.OPENROUTER_API_KEY
-                and not cls.OPENROUTER_API_KEY.startswith("sk-or-v1-your")
+                key and not key.startswith("sk-or-v1-your") and not key.startswith("tvly-your")
             ),
             "tavily": bool(
-                cls.TAVILY_API_KEY
-                and not cls.TAVILY_API_KEY.startswith("tvly-your")
+                tavily and not tavily.startswith("tvly-your")
             ),
-            "langsmith": bool(cls.LANGCHAIN_API_KEY),
+            "langsmith": bool(cls.get_langchain_key()),
         }
 
     @classmethod
     def require_openrouter(cls) -> str:
-        """Get OpenRouter key or raise clear error."""
-        if not cls.OPENROUTER_API_KEY or cls.OPENROUTER_API_KEY.startswith("sk-or-v1-your"):
+        """Get API key or raise clear error."""
+        key = cls.get_openrouter_key()
+        if not key or key.startswith("sk-or-v1-your"):
             raise ValueError(
-                "\n❌ OPENROUTER_API_KEY not set!\n"
-                "   1. Go to https://openrouter.ai\n"
-                "   2. Sign up (FREE — no credit card needed)\n"
-                "   3. Go to https://openrouter.ai/settings/keys\n"
-                "   4. Create an API key\n"
-                "   5. Add it to your .env file as OPENROUTER_API_KEY=sk-or-v1-...\n"
+                "\n❌ OPENROUTER_API_KEY not set in .env!\n"
+                "   1. Go to https://openrouter.ai (or https://console.groq.com)\n"
+                "   2. Create a FREE API key\n"
+                "   3. Add it to your .env file as OPENROUTER_API_KEY=sk-or-v1-...\n"
             )
-        return cls.OPENROUTER_API_KEY
+        return key
 
     @classmethod
     def require_tavily(cls) -> str:
         """Get Tavily key or raise clear error."""
-        if not cls.TAVILY_API_KEY or cls.TAVILY_API_KEY.startswith("tvly-your"):
+        key = cls.get_tavily_key()
+        if not key or key.startswith("tvly-your"):
             raise ValueError(
-                "\n❌ TAVILY_API_KEY not set!\n"
+                "\n❌ TAVILY_API_KEY not set in .env!\n"
                 "   1. Go to https://tavily.com\n"
                 "   2. Sign up (FREE tier available)\n"
-                "   3. Add the key to your .env file\n"
+                "   3. Add the key to your .env file as TAVILY_API_KEY=tvly-...\n"
             )
-        return cls.TAVILY_API_KEY
+        return key
 
 
 # ──────────────────────────────────────────────
@@ -91,43 +104,40 @@ class APIKeys:
 class ModelConfig:
     """LLM and embedding model settings."""
 
-    # ─── LLM: Llama 3.3 70B via OpenRouter ───
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "google/gemma-4-31b-it:free")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     LLM_MAX_TOKENS: int = 4096
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 
-    # OpenRouter free tier rate limits
-    # ~20 requests/minute, 200 requests/day for free models
     OPENROUTER_RATE_LIMIT_RPM: int = 20
     OPENROUTER_RATE_LIMIT_RPD: int = 200
 
-    # ─── Embeddings: HuggingFace (local, free) ───
     EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "huggingface")
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    EMBEDDING_DIMENSIONS: int = 384  # all-MiniLM-L6-v2 outputs 384-dim vectors
+    EMBEDDING_DIMENSIONS: int = 384
 
     @classmethod
     def get_llm(cls):
-        """
-        Create and return the LLM instance.
-
-        Uses LangChain's ChatOpenAI with OpenRouter's base_url.
-        OpenRouter is OpenAI-API-compatible, so ChatOpenAI works perfectly.
-
-        This is the KEY TRICK:
-            ChatOpenAI(base_url="https://openrouter.ai/api/v1")
-        tells LangChain to send requests to OpenRouter instead of OpenAI.
-        """
+        """Create and return the LLM instance."""
         from langchain_openai import ChatOpenAI
 
+        api_key = APIKeys.require_openrouter()
+        base_url = cls.LLM_BASE_URL
+        model = cls.LLM_MODEL
+
+        # Auto-detect Groq keys (gsk_...) vs OpenRouter keys (sk-or-v1-...)
+        if api_key.startswith("gsk_"):
+            base_url = "https://api.groq.com/openai/v1"
+            if model == "meta-llama/llama-3.3-70b-instruct:free":
+                model = "llama-3.3-70b-versatile"
+
         return ChatOpenAI(
-            model=cls.LLM_MODEL,
+            model=model,
             temperature=cls.LLM_TEMPERATURE,
             max_tokens=cls.LLM_MAX_TOKENS,
-            api_key=APIKeys.require_openrouter(),
-            base_url=cls.LLM_BASE_URL,
+            api_key=api_key,
+            base_url=base_url,
             default_headers={
                 "HTTP-Referer": "https://b2b-proposal-generator.app",
                 "X-Title": "B2B Proposal Generator",

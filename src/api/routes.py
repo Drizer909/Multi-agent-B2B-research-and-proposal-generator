@@ -140,6 +140,7 @@ def _run_pipeline_job(thread_id: str, company_name: str, user_request: str, requ
             company_name=company_name,
             user_request=user_request,
             requestor_name=requestor_name,
+            thread_id=thread_id,
         )
 
         if result.get("error"):
@@ -228,9 +229,20 @@ async def get_proposal_status(thread_id: str):
         if state and state.values:
             val = state.values
             phase = val.get("current_phase", "")
+            status_str = "completed" if phase == "completed" else "running"
+            
+            # Re-populate in-memory cache
+            _jobs[thread_id] = {
+                "status": status_str,
+                "company_name": val.get("company_name", ""),
+                "result": val,
+                "error": val.get("error", ""),
+                "started_at": time.time(),
+            }
+
             return ProposalStatusResponse(
                 thread_id=thread_id,
-                status="completed" if phase == "completed" else "running",
+                status=status_str,
                 current_phase=phase,
                 company_name=val.get("company_name", ""),
                 qa_score=val.get("qa_score", 0.0),
@@ -271,7 +283,16 @@ async def get_proposal_result(thread_id: str):
         config = {"configurable": {"thread_id": thread_id}}
         state = app.get_state(config)
         if state and state.values:
-            return ProposalResponse.from_state(state.values)
+            val = state.values
+            phase = val.get("current_phase", "")
+            _jobs[thread_id] = {
+                "status": "completed" if phase == "completed" else "running",
+                "company_name": val.get("company_name", ""),
+                "result": val,
+                "error": val.get("error", ""),
+                "started_at": time.time(),
+            }
+            return ProposalResponse.from_state(val)
     except Exception:
         pass
 

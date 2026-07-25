@@ -18,6 +18,19 @@ async def lifespan(app: FastAPI):
     print(f"  📄 Docs:    http://localhost:8000/docs")
     print(f"  ❤️  Health:  http://localhost:8000/health")
     print("═" * 60 + "\n")
+
+    # Check and auto-ingest documents into ChromaDB if collection is empty
+    try:
+        from src.rag.embeddings import get_vector_store
+        from src.rag.ingest import ingest_documents
+        vs = get_vector_store()
+        existing = vs.get()
+        if not existing or not existing.get("ids"):
+            print("  📥 ChromaDB collection is empty. Triggering automatic document ingestion...")
+            ingest_documents()
+    except Exception as e:
+        print(f"  ⚠️ Vector DB startup check warning: {e}")
+
     yield
     print("\n  👋 API Server shutting down...\n")
 

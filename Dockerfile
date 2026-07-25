@@ -24,5 +24,10 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8000
 
+# Optimize memory/CPU usage for free-tier hosting limits
+ENV OMP_NUM_THREADS=1
+ENV TOKENIZERS_PARALLELISM=false
+ENV PYTHONUNBUFFERED=1
+
 # Start the application using the existing run script (with auto-reload disabled for production stability)
 CMD ["python", "scripts/run_api.py", "--host", "0.0.0.0", "--no-reload"]

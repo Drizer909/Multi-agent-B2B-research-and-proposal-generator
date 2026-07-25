@@ -166,7 +166,7 @@ def build_graph_no_interrupt():
 # Run Functions
 # ────────────────────────────────────────────────────────
 
-def run_proposal(company_name: str, user_request: str, requestor_name: str = "Sales Team") -> dict:
+def run_proposal(company_name: str, user_request: str, requestor_name: str = "Sales Team", thread_id: str = None) -> dict:
     """Runs the full pipeline in AUTO mode (no pausing)."""
     print("\n" + "🚀" * 30)
     print("  B2B PROPOSAL GENERATOR — Full Auto Mode")
@@ -175,7 +175,8 @@ def run_proposal(company_name: str, user_request: str, requestor_name: str = "Sa
     initial_state = create_initial_state(company_name, user_request, requestor_name)
     app = build_graph_no_interrupt()
     
-    thread_id = f"proposal_{int(time.time())}"
+    if not thread_id:
+        thread_id = f"proposal_{int(time.time())}"
     config = {"configurable": {"thread_id": thread_id}}
     
     print(f"\n  Starting Thread: {thread_id}")
