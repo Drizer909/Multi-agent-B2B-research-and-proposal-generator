@@ -144,11 +144,20 @@ def _build_base_graph(progress_callback: ProgressCallback | None = None) -> Stat
     def next_unless_failed(next_node):
         return lambda state: END if state.get("error") else next_node
 
-    for current, following in (("research", "analysis"), ("analysis", "writing"), ("writing", "qa")):
+    for current, following in (("research", "analysis"), ("analysis", "writing")):
         workflow.add_conditional_edges(
             current, next_unless_failed(following), {following: following, END: END}
         )
-    
+
+    def route_after_writing(state: ProposalState) -> Literal["qa", "human_review", "__end__"]:
+        if state.get("error"):
+            return END
+        if state.get("current_phase") == "writing_revision_skipped":
+            return "human_review"
+        return "qa"
+
+    workflow.add_conditional_edges("writing", route_after_writing)
+
     # Conditional Edges from QA
     workflow.add_conditional_edges(
         "qa",

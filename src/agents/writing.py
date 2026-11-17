@@ -60,6 +60,18 @@ Return ONLY the JSON object, no other text."""
 # Main Agent Function (LangGraph Node)
 # ──────────────────────────────────────────────
 
+def _parse_proposal_sections(text: str) -> dict[str, str]:
+    """Read a complete JSON object, including responses wrapped in Markdown."""
+    decoder = json.JSONDecoder(strict=False)
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object in the writer response.")
+    sections, _ = decoder.raw_decode(text, idx=start)
+    if not sections or any(not isinstance(value, str) for value in sections.values()):
+        raise ValueError("Expected a nonempty object with text values for proposal sections.")
+    return sections
+
+
 def writing_agent(state: ProposalState) -> dict:
     """
     Writing Agent — LangGraph node function.
@@ -142,59 +154,38 @@ def writing_agent(state: ProposalState) -> dict:
         # Call LLM
         print("\n🧠 Generating proposal with LLM...")
         llm = ModelConfig.get_llm(json_mode=True)
-        rate_limiter.wait_if_needed()
-
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=writing_brief),
         ]
 
-        response = llm.invoke(messages)
-        response_text = response.content.strip()
-
-        # Parse JSON
-        print("\n📝 Parsing proposal sections...")
-
-        cleaned_text = response_text
-        if "```" in cleaned_text:
-            import re
-            match = re.search(r"```(?:json)?\s*(.*?)\s*```", cleaned_text, re.DOTALL)
-            if match:
-                cleaned_text = match.group(1)
-        
-        cleaned_text = cleaned_text.strip()
-
-        # Repair JSON: Escape raw control characters (like newlines) inside strings
-        # This is a common LLM error where it provides literal newlines instead of \n
-        import re
-        def repair_json_strings(text):
-            # Find content between double quotes
-            # This regex is simple and might need refinement for complex quotes
-            def replace_control_chars(match):
-                content = match.group(0)
-                # Replace actual newlines, tabs, etc. inside the quoted string
-                content = content.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
-                return content
-            return re.sub(r'".*?"', replace_control_chars, text, flags=re.DOTALL)
-
-        try:
-            # First attempt: standard parse
-            proposal_sections: dict[str, str] = json.loads(cleaned_text)
-        except json.JSONDecodeError:
-            # Second attempt: repair and retry
-            print("  ⚠️ Initial JSON parse failed. Attempting repair...")
+        for attempt in range(2):
+            rate_limiter.wait_if_needed()
+            response = llm.invoke(messages)
             try:
-                repaired_text = repair_json_strings(cleaned_text)
-                proposal_sections = json.loads(repaired_text)
-                print("  ✅ JSON repair successful!")
-            except json.JSONDecodeError:
-                # Third attempt: regex extraction fallback
-                import re
-                match = re.search(r"\{.*\}", cleaned_text, re.DOTALL)
-                if match:
-                    proposal_sections = json.loads(match.group(0))
-                else:
-                    raise
+                proposal_sections = _parse_proposal_sections(response.content.strip())
+                break
+            except ValueError as exc:
+                if attempt == 0:
+                    print("  Writer returned invalid JSON. Retrying with a shorter brief for the response.")
+                    messages.append(HumanMessage(content=(
+                        "Return only a complete JSON object. Keep each required section concise "
+                        "and finish the full response within 900 words."
+                    )))
+                    continue
+
+                if state.get("revision_count") and state.get("proposal_draft", "").strip():
+                    note = f"Revision {state['revision_count']} skipped after invalid writer output. Kept the previous QA-reviewed draft."
+                    print(f"  {note}")
+                    return {
+                        "current_phase": "writing_revision_skipped",
+                        "revision_history": [note],
+                    }
+
+                return {
+                    "current_phase": "writing_failed",
+                    "error": f"The writer returned an incomplete or invalid proposal after retrying: {exc}",
+                }
 
         # Assemble full proposal draft
         draft_parts = [
@@ -244,16 +235,6 @@ def writing_agent(state: ProposalState) -> dict:
             "current_phase": "writing_complete",
         }
 
-    except json.JSONDecodeError as e:
-        error_msg = f"Failed to parse proposal sections as JSON: {e}"
-        print(f"\n  ❌ {error_msg}")
-        print(f"  ❌ Raw response (first 500 chars):\n{response_text[:500]}")
-        return {
-            "proposal_draft": "",
-            "proposal_sections": {},
-            "current_phase": "writing_failed",
-            "error": error_msg,
-        }
     except Exception as e:
         error_msg = f"Writing agent error: {e}"
         print(f"\n  ❌ {error_msg}")
