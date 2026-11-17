@@ -1,7 +1,7 @@
 """
 Central configuration for the B2B Proposal Generator.
 
-LLM:        Meta Llama 3.3 70B Instruct (FREE) via OpenRouter
+LLM:        OpenAI-compatible API via Groq or OpenRouter
 Embeddings: HuggingFace all-MiniLM-L6-v2 (FREE, local)
 Search:     Tavily (FREE tier)
 Vector DB:  ChromaDB (local)
@@ -12,6 +12,7 @@ ChatOpenAI class with base_url="https://openrouter.ai/api/v1"
 
 import os
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -46,7 +47,7 @@ class APIKeys:
 
     @classmethod
     def get_openrouter_key(cls) -> str:
-        return os.getenv("OPENROUTER_API_KEY", "")
+        return os.getenv("GROQ_API_KEY") or os.getenv("OPENROUTER_API_KEY", "")
 
     @classmethod
     def get_tavily_key(cls) -> str:
@@ -80,7 +81,7 @@ class APIKeys:
                 "\n❌ OPENROUTER_API_KEY not set in .env!\n"
                 "   1. Go to https://openrouter.ai (or https://console.groq.com)\n"
                 "   2. Create a FREE API key\n"
-                "   3. Add it to your .env file as OPENROUTER_API_KEY=sk-or-v1-...\n"
+                "   3. Set OPENROUTER_API_KEY or GROQ_API_KEY in .env.\n"
             )
         return key
 
@@ -105,7 +106,7 @@ class ModelConfig:
     """LLM and embedding model settings."""
 
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openrouter")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "google/gemma-4-31b-it:free")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "openai/gpt-oss-120b")
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
     LLM_MAX_TOKENS: int = 4096
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://openrouter.ai/api/v1")
@@ -118,7 +119,7 @@ class ModelConfig:
     EMBEDDING_DIMENSIONS: int = 384
 
     @classmethod
-    def get_llm(cls):
+    def get_llm(cls, *, json_mode: bool = False, max_tokens: int | None = None):
         """Create and return the LLM instance."""
         from langchain_openai import ChatOpenAI
 
@@ -129,13 +130,18 @@ class ModelConfig:
         # Auto-detect Groq keys (gsk_...) vs OpenRouter keys (sk-or-v1-...)
         if api_key.startswith("gsk_"):
             base_url = "https://api.groq.com/openai/v1"
-            if model == "meta-llama/llama-3.3-70b-instruct:free":
-                model = "llama-3.3-70b-versatile"
+            if "llama" in model.lower() or "qwen" in model.lower() or "gemma" in model.lower():
+                model = "openai/gpt-oss-120b"
 
+        groq_gpt_oss = base_url == "https://api.groq.com/openai/v1" and model.startswith("openai/gpt-oss-")
         return ChatOpenAI(
             model=model,
             temperature=cls.LLM_TEMPERATURE,
-            max_tokens=cls.LLM_MAX_TOKENS,
+            max_tokens=max_tokens if max_tokens is not None else cls.LLM_MAX_TOKENS,
+            timeout=60,
+            max_retries=6,
+            reasoning_effort="low" if json_mode and groq_gpt_oss else None,
+            model_kwargs={"response_format": {"type": "json_object"}} if json_mode and groq_gpt_oss else {},
             api_key=api_key,
             base_url=base_url,
             default_headers={
@@ -145,6 +151,7 @@ class ModelConfig:
         )
 
     @classmethod
+    @lru_cache(maxsize=1)
     def get_embeddings(cls):
         """
         Create and return the embedding model.

@@ -32,9 +32,9 @@ def test_proposal_status_in_memory():
     _jobs[thread_id] = {
         "status": "running",
         "company_name": "Test Company",
-        "result": {"current_phase": "research"},
+        "current_phase": "research",
         "error": "",
-        "started_at": 1000.0
+        "started_at": ""
     }
     
     response = client.get(f"/proposal/status/{thread_id}")
@@ -44,3 +44,46 @@ def test_proposal_status_in_memory():
     assert data["status"] == "running"
     assert data["company_name"] == "Test Company"
     assert data["current_phase"] == "research"
+
+
+def test_async_job_reports_active_agent_before_completion(monkeypatch, tmp_path):
+    from threading import Event
+
+    from src.config import StorageConfig
+    from src.graph import workflow
+
+    entered_analysis = Event()
+    release_analysis = Event()
+
+    def analyze(state):
+        entered_analysis.set()
+        assert release_analysis.wait(timeout=10)
+        return {"current_phase": "analysis_complete"}
+
+    monkeypatch.setattr(StorageConfig, "SQLITE_CHECKPOINT_PATH", str(tmp_path / "jobs.db"))
+    monkeypatch.setattr(workflow, "research_agent", lambda state: {"current_phase": "research_complete"})
+    monkeypatch.setattr(workflow, "analysis_agent", analyze)
+    monkeypatch.setattr(workflow, "writing_agent", lambda state: {"proposal_draft": "# Test proposal"})
+    monkeypatch.setattr(workflow, "qa_agent", lambda state: {"qa_score": 1.0})
+
+    with TestClient(app) as live_client:
+        response = live_client.post("/proposal/generate/async", json={
+            "company_name": "Progress Test",
+            "user_request": "Generate a test proposal.",
+        })
+        assert response.status_code == 200
+        thread_id = response.json()["thread_id"]
+        try:
+            assert entered_analysis.wait(timeout=5)
+            response = live_client.get(f"/proposal/status/{thread_id}")
+            assert response.headers["cache-control"] == "no-store"
+            assert response.json()["status"] == "running"
+            assert response.json()["current_phase"] == "analysis"
+            assert live_client.get(f"/proposal/result/{thread_id}").status_code == 202
+        finally:
+            release_analysis.set()
+
+    assert _jobs.pop(thread_id)["status"] == "completed"
+    response = client.get(f"/proposal/result/{thread_id}")
+    assert response.status_code == 200
+    assert response.json()["final_proposal"] == "# Test proposal"

@@ -5,9 +5,9 @@ Wires together Research, Analysis, Writing, and QA agents into a
 directed graph with persistence and conditional routing.
 """
 
-import time
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Callable, Literal
+from uuid import uuid4
 
 from langgraph.graph import END, StateGraph
 
@@ -18,6 +18,8 @@ from src.agents.analysis import analysis_agent
 from src.agents.writing import writing_agent
 from src.agents.qa import qa_agent
 from src.graph.checkpointer import get_checkpointer
+
+ProgressCallback = Callable[[dict], None]
 
 # ────────────────────────────────────────────────────────
 # Helper Nodes
@@ -62,6 +64,12 @@ def human_review(state: ProposalState) -> dict:
 def finalize(state: ProposalState) -> dict:
     """Final node that stamps the proposal as complete."""
     proposal_draft = state.get("proposal_draft", "")
+    if state.get("error") or not proposal_draft.strip():
+        return {
+            "approved": False,
+            "current_phase": "failed",
+            "error": state.get("error") or "The pipeline produced an empty proposal.",
+        }
     
     print("\n" + "═" * 60)
     print("  🎉 FINALIZE — Proposal Workflow Complete!")
@@ -78,10 +86,13 @@ def finalize(state: ProposalState) -> dict:
 # Routing Logic
 # ────────────────────────────────────────────────────────
 
-def route_after_qa(state: ProposalState) -> Literal["human_review", "increment_revision"]:
+def route_after_qa(state: ProposalState) -> Literal["human_review", "increment_revision", "__end__"]:
     """
     Routes based on QA score and revision limits.
     """
+    if state.get("error"):
+        return END
+
     qa_score = state.get("qa_score", 0.0)
     revision_count = state.get("revision_count", 0)
     
@@ -103,26 +114,40 @@ def route_after_qa(state: ProposalState) -> Literal["human_review", "increment_r
 # Graph Builder
 # ────────────────────────────────────────────────────────
 
-def _build_base_graph() -> StateGraph:
+def _build_base_graph(progress_callback: ProgressCallback | None = None) -> StateGraph:
     """Builds the core StateGraph with nodes and edges."""
     workflow = StateGraph(ProposalState)
     
     # Add Nodes
-    workflow.add_node("research", research_agent)
-    workflow.add_node("analysis", analysis_agent)
-    workflow.add_node("writing", writing_agent)
-    workflow.add_node("qa", qa_agent)
-    workflow.add_node("increment_revision", increment_revision)
-    workflow.add_node("human_review", human_review)
-    workflow.add_node("finalize", finalize)
+    def tracked_node(node, phase):
+        def run(state: ProposalState):
+            if progress_callback:
+                progress_callback({**state, "current_phase": phase(state) if callable(phase) else phase})
+            return node(state)
+        return run
+
+    workflow.add_node("research", tracked_node(research_agent, "research"))
+    workflow.add_node("analysis", tracked_node(analysis_agent, "analysis"))
+    workflow.add_node("writing", tracked_node(writing_agent, "writing"))
+    workflow.add_node("qa", tracked_node(qa_agent, "qa"))
+    workflow.add_node("increment_revision", tracked_node(
+        increment_revision, lambda state: f"revision_{state.get('revision_count', 0) + 1}"
+    ))
+    workflow.add_node("human_review", tracked_node(human_review, "finalizing"))
+    workflow.add_node("finalize", tracked_node(finalize, "finalizing"))
     
     # Set Entry Point
     workflow.set_entry_point("research")
     
     # Define Edges
-    workflow.add_edge("research", "analysis")
-    workflow.add_edge("analysis", "writing")
-    workflow.add_edge("writing", "qa")
+    # Agent errors are terminal; do not spend more API calls or finalize a failed run.
+    def next_unless_failed(next_node):
+        return lambda state: END if state.get("error") else next_node
+
+    for current, following in (("research", "analysis"), ("analysis", "writing"), ("writing", "qa")):
+        workflow.add_conditional_edges(
+            current, next_unless_failed(following), {following: following, END: END}
+        )
     
     # Conditional Edges from QA
     workflow.add_conditional_edges(
@@ -130,7 +155,8 @@ def _build_base_graph() -> StateGraph:
         route_after_qa,
         {
             "human_review": "human_review",
-            "increment_revision": "increment_revision"
+            "increment_revision": "increment_revision",
+            END: END,
         }
     )
     
@@ -153,9 +179,9 @@ def build_graph():
         interrupt_before=["human_review"]
     )
 
-def build_graph_no_interrupt():
+def build_graph_no_interrupt(progress_callback: ProgressCallback | None = None):
     """Compiles the graph WITHOUT human interrupt (full auto)."""
-    workflow = _build_base_graph()
+    workflow = _build_base_graph(progress_callback)
     checkpointer = get_checkpointer()
     
     return workflow.compile(
@@ -166,17 +192,24 @@ def build_graph_no_interrupt():
 # Run Functions
 # ────────────────────────────────────────────────────────
 
-def run_proposal(company_name: str, user_request: str, requestor_name: str = "Sales Team", thread_id: str = None) -> dict:
+def run_proposal(
+    company_name: str,
+    user_request: str,
+    requestor_name: str = "Sales Team",
+    thread_id: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    requestor_email: str = "",
+) -> dict:
     """Runs the full pipeline in AUTO mode (no pausing)."""
     print("\n" + "🚀" * 30)
     print("  B2B PROPOSAL GENERATOR — Full Auto Mode")
     print("🚀" * 30)
     
-    initial_state = create_initial_state(company_name, user_request, requestor_name)
-    app = build_graph_no_interrupt()
+    initial_state = create_initial_state(company_name, user_request, requestor_name, requestor_email)
+    app = build_graph_no_interrupt(progress_callback)
     
     if not thread_id:
-        thread_id = f"proposal_{int(time.time())}"
+        thread_id = f"proposal_{uuid4().hex}"
     config = {"configurable": {"thread_id": thread_id}}
     
     print(f"\n  Starting Thread: {thread_id}")
@@ -195,7 +228,7 @@ def run_proposal_with_review(company_name: str, user_request: str, requestor_nam
     initial_state = create_initial_state(company_name, user_request, requestor_name)
     app = build_graph()
     
-    thread_id = f"review_{int(time.time())}"
+    thread_id = f"review_{uuid4().hex}"
     config = {"configurable": {"thread_id": thread_id}}
     
     print(f"\n  Starting Review Thread: {thread_id}")
@@ -220,6 +253,16 @@ def resume_after_review(app, config: dict, approved: bool = True, feedback: str 
     print("  RESUMING PIPELINE")
     print("▶️" * 30)
     
+    if not approved:
+        # Mark this run terminal without ever executing the finalizer.
+        app.update_state(config, {
+            "approved": False,
+            "human_feedback": feedback,
+            "current_phase": "rejected",
+            "review_completed_at": datetime.now(timezone.utc).isoformat(),
+        }, as_node="finalize")
+        return app.get_state(config).values
+
     if feedback:
         print(f"  💬 Feedback provided: {feedback}")
         app.update_state(config, {"human_feedback": feedback})

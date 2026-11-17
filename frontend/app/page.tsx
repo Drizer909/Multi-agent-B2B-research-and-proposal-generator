@@ -70,7 +70,7 @@ export default function Home() {
             )}
 
             {/* ─── GENERATING State ─── */}
-            {pageState === "generating" && threadId && (
+            {(pageState === "generating" || pageState === "error") && threadId && (
                 <div className="animate-in zoom-in-95 duration-500">
                     <ProgressTracker
                         threadId={threadId}
@@ -84,12 +84,12 @@ export default function Home() {
             {pageState === "result" && result && (
                 <div className="space-y-10">
                     <div className="flex flex-col md:flex-row items-center justify-between gap-6 mb-4">
-                        <div className="text-center md:text-left">
+                        <div className="min-w-0 text-center md:text-left">
                             <h2 className="text-4xl font-black text-white mb-2 tracking-tight">
                                 Proposal Ready
                             </h2>
-                            <div className="flex items-center justify-center md:justify-start gap-3">
-                                <span className="px-3 py-1 rounded bg-blue-500/10 border border-blue-500/20 text-xs font-bold text-blue-400 uppercase tracking-widest">
+                            <div className="flex flex-wrap items-center justify-center gap-3 md:justify-start">
+                                <span className="max-w-full rounded border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs font-bold uppercase tracking-widest text-blue-400 [overflow-wrap:anywhere]">
                                     {result.company_name}
                                 </span>
                                 <span className="text-slate-500 text-xs font-medium">
@@ -131,12 +131,16 @@ export default function Home() {
                             <RefreshCw className="w-4 h-4" />
                             Re-initialize System
                         </button>
-                        <button className="text-slate-500 text-[10px] font-bold uppercase tracking-widest hover:text-slate-300">
-                            Download Error Logs
-                        </button>
+                        <a
+                            href={`data:text/plain;charset=utf-8,${encodeURIComponent(error)}`}
+                            download="proposal-error.txt"
+                            className="text-slate-500 text-[10px] font-bold uppercase tracking-widest hover:text-slate-300"
+                        >
+                            Download Error Details
+                        </a>
                     </div>
 
-                    {(error.includes("429") || error.includes("Rate limit")) && (
+                    {(error.includes("429") || error.toLowerCase().includes("rate limit")) && (
                         <div className="mt-10 p-6 bg-slate-900/80 border border-slate-800 rounded-xl text-left max-w-lg mx-auto">
                             <div className="flex items-center gap-3 mb-3">
                                 <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
@@ -145,8 +149,8 @@ export default function Home() {
                                 </p>
                             </div>
                             <p className="text-slate-400 text-xs leading-relaxed">
-                                OpenRouter free tier has a limit of <span className="text-white">50 requests/day</span>.
-                                Wait until midnight UTC or switch to a paid model to resume unlimited generations.
+                                The model provider is limiting requests. Try again shortly. If the limit persists,
+                                check usage in your provider dashboard.
                             </p>
                         </div>
                     )}

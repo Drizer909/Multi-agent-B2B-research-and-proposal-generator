@@ -1,13 +1,5 @@
-/**
- * API Client — All fetch functions that call the FastAPI backend.
- *
- * Uses Next.js rewrite proxy (/api/* → localhost:8000/*)
- * OR direct calls via NEXT_PUBLIC_API_URL env var.
- */
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-// ─── Types ───────────────────────────────────────
+/** Browser calls use the same-origin Next.js proxy unless explicitly configured. */
+export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 
 export interface ProposalRequest {
     company_name: string;
@@ -30,13 +22,15 @@ export interface ProposalStatus {
     revision_count: number;
     approved: boolean;
     error: string;
+    started_at?: string;
+    completed_at?: string;
 }
 
 export interface ProposalResult {
     company_name: string;
     industry: string;
     pain_points: string[];
-    solution_mapping: Record<string, any>;
+    solution_mapping: Record<string, unknown>;
     proposal_draft: string;
     qa_score: number;
     revision_count: number;
@@ -52,75 +46,73 @@ export interface HealthCheck {
     version: string;
     api_keys: Record<string, boolean>;
     requests_remaining: number;
-    components: Record<string, any>;
+    components: Record<string, unknown>;
 }
 
-// ─── API Functions ───────────────────────────────
+export class ApiError extends Error {
+    constructor(message: string, public status: number) {
+        super(message);
+        this.name = "ApiError";
+    }
+}
+
+async function request(path: string, init: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    init.signal?.addEventListener("abort", abort, { once: true });
+    if (init.signal?.aborted) controller.abort();
+    const timeout = setTimeout(abort, 30_000);
+    try {
+        const response = await fetch(`${API_BASE}${path}`, {
+            ...init,
+            cache: "no-store",
+            signal: controller.signal,
+        });
+        if (!response.ok || response.status === 202) {
+            const body = await response.json().catch(() => null);
+            const detail = body?.detail;
+            const message = typeof detail === "string" ? detail
+                : Array.isArray(detail) ? detail.map((item: { msg?: string }) => item.msg || "Invalid input").join("; ")
+                : `Request failed (${response.status})`;
+            throw new ApiError(message, response.status);
+        }
+        return response;
+    } finally {
+        clearTimeout(timeout);
+        init.signal?.removeEventListener("abort", abort);
+    }
+}
+
+function jsonPost(body: unknown): RequestInit {
+    return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+}
 
 export async function checkHealth(): Promise<HealthCheck> {
-    const res = await fetch(`${API_BASE}/health`);
-    if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-    return res.json();
+    return (await request("/health")).json();
 }
 
-export async function startProposal(
-    request: ProposalRequest
-): Promise<AsyncJobResponse> {
-    const res = await fetch(`${API_BASE}/proposal/generate/async`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            company_name: request.company_name,
-            user_request: request.user_request,
-            requestor_name: request.requestor_name || "Sales Team",
-        }),
-    });
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "Failed to start proposal generation");
-    }
-    return res.json();
+export async function startProposal(input: ProposalRequest): Promise<AsyncJobResponse> {
+    return (await request("/proposal/generate/async", jsonPost({
+        ...input, requestor_name: input.requestor_name || "Sales Team",
+    }))).json();
 }
 
-export async function getProposalStatus(
-    threadId: string
-): Promise<ProposalStatus> {
-    const res = await fetch(`${API_BASE}/proposal/status/${threadId}`);
-    if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
-    return res.json();
+export async function getProposalStatus(threadId: string, signal?: AbortSignal): Promise<ProposalStatus> {
+    return (await request(`/proposal/status/${encodeURIComponent(threadId)}`, { signal })).json();
 }
 
-export async function getProposalResult(
-    threadId: string
-): Promise<ProposalResult> {
-    const res = await fetch(`${API_BASE}/proposal/result/${threadId}`);
-    if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail || "Failed to get result");
-    }
-    return res.json();
+export async function getProposalResult(threadId: string): Promise<ProposalResult> {
+    return (await request(`/proposal/result/${encodeURIComponent(threadId)}`)).json();
 }
 
 export async function exportProposal(
-    format: "pdf" | "html" | "markdown",
-    proposalMarkdown: string,
-    companyName: string
+    format: "pdf" | "html" | "markdown", proposalMarkdown: string, companyName: string
 ): Promise<Blob> {
-    const res = await fetch(`${API_BASE}/proposal/export/${format}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-            proposal_markdown: proposalMarkdown,
-            company_name: companyName,
-        }),
-    });
-    if (!res.ok) throw new Error(`Export failed: ${res.status}`);
-    return res.blob();
+    return (await request(`/proposal/export/${format}`, jsonPost({
+        proposal_markdown: proposalMarkdown, company_name: companyName,
+    }))).blob();
 }
 
 export async function getExportFormats(): Promise<Record<string, boolean>> {
-    const res = await fetch(`${API_BASE}/proposal/export/formats`);
-    if (!res.ok) return { pdf: false, html: true, markdown: true };
-    const data = await res.json();
-    return data.formats;
+    return (await (await request("/proposal/export/formats")).json()).formats;
 }

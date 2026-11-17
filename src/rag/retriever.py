@@ -72,14 +72,15 @@ def search_with_filters(
         filter=where_filter,
     )
 
-    # Python-side filtering for flexibility
+    # Match any industry in a composite label such as "FinTech / Payments".
+    industries = [part.strip().casefold() for part in industry.split("/") if part.strip()] if industry else []
     filtered_results = []
     for doc in results:
         match = True
         
-        if industry:
-            doc_ind = doc.metadata.get("industry", "").lower()
-            if industry.lower() not in doc_ind:
+        if industries:
+            doc_ind = doc.metadata.get("industry", "").casefold()
+            if not any(name in doc_ind for name in industries):
                 match = False
         
         if company_size:

@@ -25,9 +25,9 @@ The **B2B Proposal Generator** is a "Sales Engineer in a Box." It uses a directe
 We don't just "ask a chatbot" to write a proposal. We use **LangGraph** to orchestrate a specialized team:
 
 - **Collaborative Intelligence**: Four distinct agents (Research, Analysis, Writer, and QA) handle specific parts of the workflow.
-- **Memory & Persistence**: Every job is saved to a database, allowing you to pause, resume, or restart generations at any time.
+- **Memory & Persistence**: LangGraph stores checkpoints in SQLite. Completed web proposals remain available after an API restart.
 - **Fact-Grounded RAG**: Integrated with **ChromaDB** for internal knowledge and **Tavily** for external market data.
-- **Human-in-the-Loop**: A built-in checkpoint system allows humans to review and provide feedback before the final export.
+- **Human-in-the-Loop**: The interactive CLI supports a human approval step. The web app finalizes proposals automatically.
 
 ### 🔄 System Architecture
 ```mermaid
@@ -37,11 +37,11 @@ graph TD
     Analysis --> Writing[Writing Agent]
     Writing --> QA[QA Agent]
     
-    QA --> ScoreCheck{QA Score < 80%?}
+    QA --> ScoreCheck{Score below threshold and revisions available?}
     ScoreCheck -- "Yes (Loop)" --> Rewriting[Increment Revision]
     Rewriting --> Writing
     
-    ScoreCheck -- "No / Max Revisions" --> HumanReview[Human Review Pause]
+    ScoreCheck -- "No / Max Revisions" --> HumanReview[Human Review in CLI Mode]
     HumanReview --> Finalize[Finalize & Stamp]
     Finalize --> End((End))
 
@@ -58,34 +58,45 @@ graph TD
 
 ## 🚀 Getting Started
 
-### 1. Prerequisites
-- **Node.js** (for Frontend)
-- **Python 3.10+** (for Backend)
-- **API Keys**: OpenRouter (LLM) and Tavily (Search)
+### 1. Backend
 
-### 2. Backend Setup
+From the repository root, create the environment and install the dependencies.
+
 ```bash
-# Navigate to root
-cd b2b-proposal-generator
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
 
-# Setup environment
-source venv/bin/activate
-cp .env.example .env  # Add your keys here
+If you don't have a `.env` yet, copy `.env.example` to `.env`. Set `GROQ_API_KEY` or `OPENROUTER_API_KEY` for the model, and set `TAVILY_API_KEY` for research. Use a model ID supported by your provider.
 
-# Start the API
+```bash
+python scripts/ingest_data.py
 python scripts/run_api.py
 ```
 
-### 3. Frontend Setup
-```bash
-# Navigate to frontend
-cd frontend
+Run ingestion during initial setup or after updating the files in `data/`. The API listens at [http://127.0.0.1:8000](http://127.0.0.1:8000/docs). Run one API worker so the live job status stays available throughout each generation.
 
-# Install & Run
-npm install
+For PDF export on macOS, install Pango and expose its libraries before launching the API. [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/latest/first_steps.html)
+
+```bash
+brew install pango
+export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix)/lib${DYLD_FALLBACK_LIBRARY_PATH:+:$DYLD_FALLBACK_LIBRARY_PATH}"
+```
+
+### 2. Frontend
+
+In a second terminal, from the repository root:
+
+```bash
+cd frontend
+npm ci
 npm run dev
 ```
-Visit `http://localhost:3000` to start generating.
+
+Open the [proposal generator](http://localhost:3000). Next.js proxies browser API requests to `127.0.0.1:8000` by default. Set `BACKEND_URL` before starting Next.js if FastAPI runs at a different address.
+
+To use human review, run `python scripts/cli_demo.py` from the repository root and select the Human Review mode.
 
 ---
 

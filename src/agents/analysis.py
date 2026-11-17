@@ -86,7 +86,7 @@ def _execute_analysis_tools(
                 "query": pp,
                 "industry": industry,
             })
-            results.append(f"=== CASE STUDIES for '{pp}' ===\n{cases}")
+            results.append(f"=== CASE STUDIES for '{pp}' ===\n{cases[:1000]}")
         except Exception as e:
             results.append(f"=== CASE STUDIES for '{pp}' ===\nSearch failed: {e}")
 
@@ -94,7 +94,7 @@ def _execute_analysis_tools(
     print("  📄 Searching product documentation...")
     try:
         products = rag_search_product_docs.invoke(user_request)
-        results.append(f"\n=== PRODUCT DOCS ===\n{products}")
+        results.append(f"\n=== PRODUCT DOCS ===\n{products[:1600]}")
     except Exception as e:
         results.append(f"\n=== PRODUCT DOCS ===\nSearch failed: {e}")
 
@@ -102,7 +102,7 @@ def _execute_analysis_tools(
     print("  💰 Searching pricing information...")
     try:
         pricing = rag_search_product_docs.invoke("pricing tiers packages enterprise")
-        results.append(f"\n=== PRICING INFO ===\n{pricing}")
+        results.append(f"\n=== PRICING INFO ===\n{pricing[:1600]}")
     except Exception as e:
         results.append(f"\n=== PRICING INFO ===\nSearch failed: {e}")
 
@@ -144,7 +144,7 @@ def analysis_agent(state: ProposalState) -> dict:
 
         # Step 2: Use LLM to synthesize analysis
         print("\n🧠 Phase 2: Analyzing with LLM...")
-        llm = ModelConfig.get_llm()
+        llm = ModelConfig.get_llm(json_mode=True, max_tokens=1800)
         rate_limiter.wait_if_needed()
 
         system_prompt = ANALYSIS_SYSTEM_PROMPT.format(

@@ -140,7 +140,7 @@ def research_agent(state: ProposalState) -> dict:
 
         # Step 2: Use LLM to synthesize into structured format
         print("\n🧠 Phase 2: Synthesizing with LLM...")
-        llm = ModelConfig.get_llm()
+        llm = ModelConfig.get_llm(json_mode=True, max_tokens=1800)
         rate_limiter.wait_if_needed()
 
         messages = [

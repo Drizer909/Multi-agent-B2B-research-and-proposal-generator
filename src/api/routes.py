@@ -13,18 +13,17 @@ Endpoints:
 """
 
 import asyncio
-import time
 import traceback
 from pathlib import Path
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from src.api.models import (
     AsyncJobResponse,
     ErrorResponse,
     ExportRequest,
-    ExportResponse,
     HealthResponse,
     ProposalRequest,
     ProposalResponse,
@@ -110,13 +109,16 @@ async def generate_proposal(request: ProposalRequest):
             company_name=request.company_name,
             user_request=request.user_request,
             requestor_name=request.requestor_name,
+            requestor_email=request.requestor_email,
         )
 
         if result.get("error"):
-             raise HTTPException(status_code=500, detail=result["error"])
+            raise HTTPException(status_code=500, detail=result["error"])
 
         return ProposalResponse.from_state(result)
 
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(
@@ -129,31 +131,81 @@ async def generate_proposal(request: ProposalRequest):
 # POST /proposal/generate/async — Async Generation
 # ══════════════════════════════════════════════
 
-def _run_pipeline_job(thread_id: str, company_name: str, user_request: str, requestor_name: str):
-    """Background function that runs the pipeline and updates the job store."""
+def _status_fields(state: dict) -> dict:
+    return {
+        "current_phase": state.get("current_phase", ""),
+        "qa_score": state.get("qa_score", 0.0),
+        "revision_count": state.get("revision_count", 0),
+        "approved": state.get("approved", False),
+        "error": state.get("error", ""),
+        "started_at": state.get("started_at", ""),
+        "completed_at": state.get("completed_at", ""),
+    }
+
+
+def _run_pipeline_job(thread_id: str, request: ProposalRequest):
+    """Publish phase snapshots as the graph starts each node."""
+    def report_progress(state: dict):
+        _jobs[thread_id] = {**_jobs[thread_id], **_status_fields(state), "status": "running"}
+
     try:
         from src.graph.workflow import run_proposal
 
-        _jobs[thread_id]["status"] = "running"
-
         result = run_proposal(
-            company_name=company_name,
-            user_request=user_request,
-            requestor_name=requestor_name,
+            company_name=request.company_name,
+            user_request=request.user_request,
+            requestor_name=request.requestor_name,
+            requestor_email=request.requestor_email,
             thread_id=thread_id,
+            progress_callback=report_progress,
         )
-
-        if result.get("error"):
-            _jobs[thread_id]["status"] = "failed"
-            _jobs[thread_id]["error"] = result["error"]
-        else:
-            _jobs[thread_id]["status"] = "completed"
-            _jobs[thread_id]["result"] = result
-
+        fields = _status_fields(result)
+        if fields["current_phase"] == "failed":
+            fields["current_phase"] = _jobs[thread_id].get("current_phase", "finalizing")
+        _jobs[thread_id] = {
+            **_jobs[thread_id],
+            **fields,
+            "status": "failed" if fields["error"] else "completed",
+            "result": result,
+        }
     except Exception as e:
-        _jobs[thread_id]["status"] = "failed"
-        _jobs[thread_id]["error"] = str(e)
+        _jobs[thread_id] = {**_jobs[thread_id], "status": "failed", "error": str(e)}
         traceback.print_exc()
+
+
+def _load_checkpoint(thread_id: str) -> dict:
+    from src.graph.workflow import build_graph_no_interrupt
+
+    app = build_graph_no_interrupt()
+    try:
+        return app.get_state({"configurable": {"thread_id": thread_id}}).values
+    finally:
+        app.checkpointer.conn.close()
+
+
+async def _get_job(thread_id: str) -> dict:
+    job = _jobs.get(thread_id)
+    if job is not None:
+        return job
+
+    # Checkpoints retain results when the single API worker restarts.
+    state = await asyncio.to_thread(_load_checkpoint, thread_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    fields = _status_fields(state)
+    if fields["current_phase"] == "completed" and not fields["error"]:
+        status = "completed"
+    else:
+        status = "failed"
+        fields["error"] = fields["error"] or "Generation was interrupted. Start a new proposal to try again."
+
+    return {
+        **fields,
+        "status": status,
+        "company_name": state.get("company_name", ""),
+        "result": state,
+    }
 
 
 @router.post(
@@ -166,26 +218,13 @@ async def generate_proposal_async(request: ProposalRequest):
     """
     Start proposal generation in the background.
     """
-    safe_name = request.company_name.lower().replace(" ", "_").replace("/", "_")
-    thread_id = f"async_{safe_name}_{int(time.time())}"
-
+    thread_id = f"async_{uuid4().hex}"
     _jobs[thread_id] = {
         "status": "queued",
         "company_name": request.company_name,
-        "result": None,
-        "error": "",
-        "started_at": time.time(),
+        "current_phase": "",
     }
-
-    # Run in background
-    asyncio.get_event_loop().run_in_executor(
-        None,
-        _run_pipeline_job,
-        thread_id,
-        request.company_name,
-        request.user_request,
-        request.requestor_name,
-    )
+    asyncio.get_running_loop().run_in_executor(None, _run_pipeline_job, thread_id, request)
 
     return AsyncJobResponse(
         thread_id=thread_id,
@@ -204,56 +243,11 @@ async def generate_proposal_async(request: ProposalRequest):
     summary="Check async proposal job status",
     tags=["Proposal"],
 )
-async def get_proposal_status(thread_id: str):
-    """Check the status of a background proposal generation job."""
-    if thread_id in _jobs:
-        job = _jobs[thread_id]
-        result = job.get("result") or {}
-        return ProposalStatusResponse(
-            thread_id=thread_id,
-            status=job["status"],
-            current_phase=result.get("current_phase", "") if isinstance(result, dict) else "",
-            company_name=job.get("company_name", ""),
-            qa_score=result.get("qa_score", 0.0) if isinstance(result, dict) else 0.0,
-            revision_count=result.get("revision_count", 0) if isinstance(result, dict) else 0,
-            approved=result.get("approved", False) if isinstance(result, dict) else False,
-            error=job.get("error", ""),
-        )
-
-    # Fallback to SQLite checkpointer if memory was reset (e.g. server restart)
-    try:
-        from src.graph.workflow import build_graph_no_interrupt
-        app = build_graph_no_interrupt()
-        config = {"configurable": {"thread_id": thread_id}}
-        state = app.get_state(config)
-        if state and state.values:
-            val = state.values
-            phase = val.get("current_phase", "")
-            status_str = "completed" if phase == "completed" else "running"
-            
-            # Re-populate in-memory cache
-            _jobs[thread_id] = {
-                "status": status_str,
-                "company_name": val.get("company_name", ""),
-                "result": val,
-                "error": val.get("error", ""),
-                "started_at": time.time(),
-            }
-
-            return ProposalStatusResponse(
-                thread_id=thread_id,
-                status=status_str,
-                current_phase=phase,
-                company_name=val.get("company_name", ""),
-                qa_score=val.get("qa_score", 0.0),
-                revision_count=val.get("revision_count", 0),
-                approved=val.get("approved", False),
-                error=val.get("error", ""),
-            )
-    except Exception:
-        pass
-
-    raise HTTPException(status_code=404, detail="Job not found")
+async def get_proposal_status(thread_id: str, response: Response):
+    """Check the current snapshot of a background job."""
+    response.headers["Cache-Control"] = "no-store"
+    job = await _get_job(thread_id)
+    return ProposalStatusResponse(thread_id=thread_id, **job)
 
 
 # ══════════════════════════════════════════════
@@ -267,37 +261,13 @@ async def get_proposal_status(thread_id: str):
     tags=["Proposal"],
 )
 async def get_proposal_result(thread_id: str):
-    """Get the full result of a completed proposal generation job."""
-    if thread_id in _jobs:
-        job = _jobs[thread_id]
-        if job["status"] in ["running", "queued"]:
-            raise HTTPException(status_code=202, detail=f"Job still {job['status']}")
-        if job["status"] == "failed":
-            raise HTTPException(status_code=500, detail=f"Job failed: {job.get('error')}")
-        return ProposalResponse.from_state(job.get("result", {}))
-
-    # Fallback to SQLite checkpointer
-    try:
-        from src.graph.workflow import build_graph_no_interrupt
-        app = build_graph_no_interrupt()
-        config = {"configurable": {"thread_id": thread_id}}
-        state = app.get_state(config)
-        if state and state.values:
-            val = state.values
-            phase = val.get("current_phase", "")
-            _jobs[thread_id] = {
-                "status": "completed" if phase == "completed" else "running",
-                "company_name": val.get("company_name", ""),
-                "result": val,
-                "error": val.get("error", ""),
-                "started_at": time.time(),
-            }
-            return ProposalResponse.from_state(val)
-    except Exception:
-        pass
-
-    raise HTTPException(status_code=404, detail="Job not found")
-
+    """Get the full result of a completed background job."""
+    job = await _get_job(thread_id)
+    if job["status"] in ("queued", "running"):
+        raise HTTPException(status_code=202, detail=f"Job still {job['status']}")
+    if job["status"] == "failed":
+        raise HTTPException(status_code=500, detail=f"Job failed: {job['error']}")
+    return ProposalResponse.from_state(job["result"])
 
 
 # ══════════════════════════════════════════════
@@ -386,8 +356,9 @@ async def export_md(request: ExportRequest):
 )
 async def download_file(filename: str):
     """Download an exported file from the output directory."""
-    filepath = StorageConfig.OUTPUT_DIR / filename
-    if not filepath.exists():
+    output_dir = StorageConfig.OUTPUT_DIR.resolve()
+    filepath = (output_dir / filename).resolve()
+    if filepath.parent != output_dir or not filepath.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
     suffix = filepath.suffix.lower()

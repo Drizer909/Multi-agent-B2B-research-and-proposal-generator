@@ -11,6 +11,7 @@ interface Props {
 
 export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
     const [formats, setFormats] = useState<Record<string, boolean>>({ pdf: false, html: true, markdown: true });
+    const [exportError, setExportError] = useState("");
     const [exporting, setExporting] = useState<string | null>(null);
     const [recentExport, setRecentExport] = useState<string | null>(null);
 
@@ -19,11 +20,12 @@ export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
     }, []);
 
     async function handleExport(format: "pdf" | "html" | "markdown") {
+        setExportError("");
         setExporting(format);
         try {
             const blob = await exportProposal(format, proposalMarkdown, companyName);
 
-            const ext = format === "markdown" ? "md" : format;
+            const ext = blob.type.startsWith("text/html") ? "html" : format === "markdown" ? "md" : format;
             const safeName = companyName.toLowerCase().replace(/[^a-z0-9]/g, "_");
             const filename = `${safeName}_proposal.${ext}`;
 
@@ -39,7 +41,7 @@ export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
             setRecentExport(format);
             setTimeout(() => setRecentExport(null), 3000);
         } catch (err) {
-            console.error(err);
+            setExportError(err instanceof Error ? err.message : "Export failed.");
         } finally {
             setExporting(null);
         }
@@ -63,6 +65,8 @@ export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
                 </div>
             </div>
 
+            {exportError && <p role="alert" className="mb-4 text-sm text-red-400">{exportError}</p>}
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 {options.map((opt) => {
                     const isPdf = opt.format === "pdf";
@@ -74,7 +78,7 @@ export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
                         <button
                             key={opt.format}
                             onClick={() => handleExport(opt.format)}
-                            disabled={!isAvailable || isLoading}
+                            disabled={!isAvailable || exporting !== null}
                             className={`flex items-center gap-4 p-4 rounded-xl border border-slate-700/50 bg-slate-800/40 transition-all duration-300 group ${opt.bg} ${opt.border} ${!isAvailable ? "opacity-50 cursor-not-allowed grayscale" : "active:scale-95"
                                 }`}
                         >
@@ -89,7 +93,7 @@ export default function ExportPanel({ proposalMarkdown, companyName }: Props) {
                                 {!isAvailable && (
                                     <div className="text-[10px] text-yellow-500 font-bold flex items-center gap-1 mt-0.5 uppercase tracking-tighter">
                                         <AlertTriangle className="w-3 h-3" />
-                                        Lib Missing {"->"} fallback used
+                                        PDF unavailable
                                     </div>
                                 )}
                                 {isAvailable && (

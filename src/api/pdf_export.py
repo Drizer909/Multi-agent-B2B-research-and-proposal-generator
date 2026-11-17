@@ -14,6 +14,8 @@ Usage:
 
 import re
 from datetime import datetime, timezone
+from html import escape
+from uuid import uuid4
 from pathlib import Path
 
 from src.config import ProposalConfig, StorageConfig
@@ -231,7 +233,7 @@ def _simple_md_to_html(text: str) -> str:
         match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
         if match:
             level = len(match.group(1))
-            content = match.group(2)
+            content = escape(match.group(2))
             html_lines.append(f"<h{level}>{content}</h{level}>")
             continue
 
@@ -240,7 +242,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_blockquote:
                 html_lines.append("<blockquote>")
                 in_blockquote = True
-            html_lines.append(stripped[2:])
+            html_lines.append(escape(stripped[2:]))
             continue
 
         # Unordered list
@@ -248,7 +250,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_list:
                 html_lines.append("<ul>")
                 in_list = True
-            content = stripped[2:]
+            content = escape(stripped[2:])
             html_lines.append(f"  <li>{content}</li>")
             continue
 
@@ -258,7 +260,7 @@ def _simple_md_to_html(text: str) -> str:
             if not in_ordered_list:
                 html_lines.append("<ol>")
                 in_ordered_list = True
-            content = ol_match.group(2)
+            content = escape(ol_match.group(2))
             html_lines.append(f"  <li>{content}</li>")
             continue
 
@@ -268,7 +270,7 @@ def _simple_md_to_html(text: str) -> str:
             continue
 
         # Regular paragraph
-        html_lines.append(f"<p>{stripped}</p>")
+        html_lines.append(f"<p>{escape(stripped)}</p>")
 
     # Close any open lists
     if in_list: html_lines.append("</ul>")
@@ -290,6 +292,7 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
     Convert proposal Markdown to a full styled HTML document.
     """
     body_html = _simple_md_to_html(markdown_text)
+    company_name = escape(company_name)
     now = datetime.now(timezone.utc).strftime("%B %d, %Y")
 
     return f"""<!DOCTYPE html>
@@ -329,13 +332,16 @@ def markdown_to_html(markdown_text: str, company_name: str) -> str:
 def _generate_filename(company_name: str, extension: str, custom_name: str = "") -> str:
     """Generate a safe filename."""
     if custom_name:
+        custom_name = re.sub(r"[^\w.-]", "_", custom_name).lstrip(".")[:200]
+        if not custom_name:
+            return _generate_filename(company_name, extension)
         if not custom_name.endswith(f".{extension}"):
             custom_name = f"{custom_name}.{extension}"
         return custom_name
 
     safe_name = re.sub(r"[^\w\s-]", "", company_name).strip().replace(" ", "_").lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return f"{safe_name}_proposal_{timestamp}.{extension}"
+    return f"{safe_name[:100]}_proposal_{timestamp}_{uuid4().hex[:8]}.{extension}"
 
 
 def export_to_pdf(

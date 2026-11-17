@@ -130,13 +130,15 @@ class ProposalStatusResponse(BaseModel):
     """Status of an async proposal job."""
 
     thread_id: str
-    status: str  # "running", "completed", "failed"
+    status: str  # "queued", "running", "completed", "failed"
     current_phase: str = ""
     company_name: str = ""
     qa_score: float = 0.0
     revision_count: int = 0
     approved: bool = False
     error: str = ""
+    started_at: str = ""
+    completed_at: str = ""
 
 
 class ExportResponse(BaseModel):

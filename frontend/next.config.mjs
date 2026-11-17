@@ -1,11 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-    // Proxy API calls to the FastAPI backend during development
+    // Proxy same-origin API calls to FastAPI.
     async rewrites() {
         return [
             {
                 source: "/api/:path*",
-                destination: "http://localhost:8000/:path*",
+                destination: `${process.env.BACKEND_URL || "http://127.0.0.1:8000"}/:path*`,
             },
         ];
     },

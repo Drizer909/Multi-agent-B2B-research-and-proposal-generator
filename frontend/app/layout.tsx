@@ -36,9 +36,9 @@ export default function RootLayout({
                                     Architect <span className="text-blue-500">B2B</span>
                                 </h1>
                                 <div className="flex items-center gap-2">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                    <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
                                     <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">
-                                        4-Agent AI Engine Online
+                                        4-Agent Proposal Pipeline
                                     </span>
                                 </div>
                             </div>
@@ -75,10 +75,7 @@ export default function RootLayout({
                         <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">
                             © 2026 Architect B2B Proposal Generator
                         </div>
-                        <div className="flex gap-6">
-                            <div className="text-[10px] font-bold text-slate-600">PRIVARY STACK: LOCAL EMBEDDINGS</div>
-                            <div className="text-[10px] font-bold text-slate-600">PROVIDER: OPENROUTER / LLAMA 3</div>
-                        </div>
+                        <div className="text-[10px] font-bold text-slate-600">LOCAL EMBEDDINGS</div>
                     </div>
                 </footer>
             </body>

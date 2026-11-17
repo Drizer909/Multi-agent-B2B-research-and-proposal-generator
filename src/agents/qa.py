@@ -132,7 +132,7 @@ def qa_agent(state: ProposalState) -> dict:
 
         # Call LLM
         print("\n🧠 Analyzing proposal quality...")
-        llm = ModelConfig.get_llm()
+        llm = ModelConfig.get_llm(json_mode=True, max_tokens=1500)
         rate_limiter.wait_if_needed()
 
         messages = [

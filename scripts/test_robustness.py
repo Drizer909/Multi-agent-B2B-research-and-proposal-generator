@@ -48,7 +48,7 @@ with a raw newline.",
     # Modify ModelConfig temporarily
     from src.config import ModelConfig
     original_get_llm = ModelConfig.get_llm
-    ModelConfig.get_llm = lambda: MockLLM()
+    ModelConfig.get_llm = lambda **kwargs: MockLLM()
     
     try:
         # Run agent with zeroed state

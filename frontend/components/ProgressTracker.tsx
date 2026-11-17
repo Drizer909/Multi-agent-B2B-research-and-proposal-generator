@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { getProposalStatus, type ProposalStatus } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ApiError, getProposalStatus, type ProposalStatus } from "@/lib/api";
+import { getStageStatus, STAGES } from "@/lib/progress";
 import { Timer, CheckCircle2, Circle, AlertCircle, Loader2 } from "lucide-react";
 
 interface Props {
@@ -10,94 +11,53 @@ interface Props {
     onError: (error: string) => void;
 }
 
-interface Stage {
-    id: string;
-    name: string;
-    icon: string;
-    phases: string[];
-}
-
-const STAGES: Stage[] = [
-    { id: "research", name: "Deep Research", icon: "🔬", phases: ["initialized", "research_complete", "research_failed"] },
-    { id: "analysis", name: "Strategic Analysis", icon: "🔍", phases: ["analysis_complete", "analysis_failed"] },
-    { id: "writing", name: "Proposal Writing", icon: "✍️", phases: ["writing_complete", "writing_failed", "revision_1", "revision_2", "revision_3"] },
-    { id: "qa", name: "QA & Verification", icon: "🔎", phases: ["qa_passed", "qa_failed", "qa_needs_revision"] },
-    { id: "review", name: "Final Review", icon: "👤", phases: ["awaiting_human_review"] },
-    { id: "complete", name: "Generating Files", icon: "🎉", phases: ["completed"] },
-];
-
-function getStageStatus(
-    stageIndex: number,
-    currentPhase: string,
-    jobStatus: string
-): "pending" | "active" | "complete" | "failed" {
-    if (jobStatus === "failed") {
-        for (let i = 0; i < STAGES.length; i++) {
-            const stage = STAGES[i];
-            if (stage.phases.some(p => currentPhase.includes(p.replace("_complete", "_failed")) || currentPhase.includes("failed"))) {
-                if (i === stageIndex) return "failed";
-                if (i < stageIndex) return "pending";
-                return "complete";
-            }
-        }
-        return stageIndex === 0 ? "failed" : "pending";
-    }
-
-    if (jobStatus === "completed" || currentPhase === "completed") return "complete";
-
-    let activeIdx = 0;
-    for (let i = STAGES.length - 1; i >= 0; i--) {
-        if (STAGES[i].phases.some((p) => currentPhase.includes(p) || currentPhase.startsWith(p.split("_")[0]))) {
-            activeIdx = i;
-            break;
-        }
-    }
-
-    if (!currentPhase || currentPhase === "initialized") {
-        return stageIndex === 0 ? "active" : "pending";
-    }
-
-    if (stageIndex < activeIdx) return "complete";
-    if (stageIndex === activeIdx) return "active";
-    return "pending";
-}
-
 export default function ProgressTracker({ threadId, onComplete, onError }: Props) {
     const [status, setStatus] = useState<ProposalStatus | null>(null);
     const [elapsed, setElapsed] = useState(0);
-    const intervalRef = useRef<NodeJS.Timeout | null>(null);
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
-    const startTime = useRef(Date.now());
+    const [connectionLost, setConnectionLost] = useState(false);
 
     useEffect(() => {
-        async function poll() {
-            try {
-                const s = await getProposalStatus(threadId);
-                setStatus(s);
-
-                if (s.status === "completed") {
-                    if (intervalRef.current) clearInterval(intervalRef.current);
-                    if (timerRef.current) clearInterval(timerRef.current);
-                    onComplete();
-                } else if (s.status === "failed") {
-                    if (intervalRef.current) clearInterval(intervalRef.current);
-                    if (timerRef.current) clearInterval(timerRef.current);
-                    onError(s.error || "Pipeline implementation error or LLM failure");
-                }
-            } catch (err) {
-                console.warn("Poll connection error:", err);
-            }
-        }
-
-        poll();
-        intervalRef.current = setInterval(poll, 3000);
-        timerRef.current = setInterval(() => {
-            setElapsed(Math.floor((Date.now() - startTime.current) / 1000));
+        const controller = new AbortController();
+        const startTime = Date.now();
+        let nextPoll: ReturnType<typeof setTimeout>;
+        const timer = setInterval(() => {
+            setElapsed(Math.floor((Date.now() - startTime) / 1000));
         }, 1000);
 
+        async function poll() {
+            try {
+                const snapshot = await getProposalStatus(threadId, controller.signal);
+                if (controller.signal.aborted) return;
+
+                setStatus(snapshot);
+                setConnectionLost(false);
+                if (snapshot.status === "completed") {
+                    clearInterval(timer);
+                    onComplete();
+                    return;
+                }
+                if (snapshot.status === "failed") {
+                    clearInterval(timer);
+                    onError(snapshot.error || "Proposal generation failed.");
+                    return;
+                }
+            } catch (err) {
+                if (controller.signal.aborted) return;
+                if (err instanceof ApiError && err.status === 404) {
+                    clearInterval(timer);
+                    onError(err.message);
+                    return;
+                }
+                setConnectionLost(true);
+            }
+            nextPoll = setTimeout(poll, 1000);
+        }
+
+        void poll();
         return () => {
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            if (timerRef.current) clearInterval(timerRef.current);
+            controller.abort();
+            clearTimeout(nextPoll);
+            clearInterval(timer);
         };
     }, [threadId, onComplete, onError]);
 
@@ -111,7 +71,7 @@ export default function ProgressTracker({ threadId, onComplete, onError }: Props
                     <h2 className="text-2xl font-bold text-white mb-1">Processing Pipeline</h2>
                     <p className="text-xs text-blue-400 font-mono tracking-wider items-center flex gap-1.5">
                         <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                        {status?.company_name ? `ID: ${threadId.slice(0, 8)} | ${status.company_name}` : "ACTIVE AGENTS RUNNING..."}
+                        {status?.company_name ? `ID: ${threadId.slice(-8)} | ${status.company_name}` : "Waiting for the pipeline"}
                     </p>
                 </div>
                 <div className="flex flex-col items-end">
@@ -123,6 +83,12 @@ export default function ProgressTracker({ threadId, onComplete, onError }: Props
                 </div>
             </div>
 
+            {connectionLost && (
+                <p role="status" className="mb-4 text-sm text-amber-400">
+                    Progress connection interrupted. Reconnecting…
+                </p>
+            )}
+
             <div className="space-y-4">
                 {STAGES.map((stage, idx) => {
                     const stageStatus = getStageStatus(
@@ -132,7 +98,11 @@ export default function ProgressTracker({ threadId, onComplete, onError }: Props
                     );
 
                     return (
-                        <div key={stage.id} className="group relative flex items-start gap-5">
+                        <div
+                            key={stage.id}
+                            aria-current={stageStatus === "active" ? "step" : undefined}
+                            className="group relative flex items-start gap-5"
+                        >
                             {/* Vertical Line */}
                             {idx !== STAGES.length - 1 && (
                                 <div className={`absolute left-[19px] top-10 w-0.5 h-6 transition-colors duration-500 ${stageStatus === "complete" ? "bg-green-600" : "bg-slate-700"

@@ -31,7 +31,7 @@ WRITING GUIDELINES:
 3. Include specific metrics and results from case studies
 4. Be concrete about timelines, deliverables, and expected outcomes
 5. Use the prospect's company name throughout (personalization is key)
-6. Each section should be 150-300 words
+6. Keep sections concise and the full proposal under 1,500 words
 7. Use markdown formatting (headers, bullets, bold for emphasis)
 
 REQUIRED SECTIONS:
@@ -129,9 +129,19 @@ def writing_agent(state: ProposalState) -> dict:
             f"Return as a JSON object with section names as keys."
         )
 
+        if state.get("revision_count") and state.get("qa_result"):
+            feedback = state["qa_result"]
+            revisions = [
+                *feedback.get("critical_issues", []),
+                *feedback.get("minor_issues", []),
+                *feedback.get("suggestions", []),
+            ]
+            if revisions:
+                writing_brief += "\n\nQA FEEDBACK TO ADDRESS:\n" + "\n".join(revisions)[:1800]
+
         # Call LLM
         print("\n🧠 Generating proposal with LLM...")
-        llm = ModelConfig.get_llm()
+        llm = ModelConfig.get_llm(json_mode=True)
         rate_limiter.wait_if_needed()
 
         messages = [
